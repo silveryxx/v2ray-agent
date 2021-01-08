@@ -6,12 +6,21 @@ checkSystem(){
 	if [[ ! -z `find /etc -name "redhat-release"` ]] || [[ ! -z `cat /proc/version | grep -i "centos" | grep -v grep ` ]]
 	then
 	    centosVersion=`rpm -q centos-release|awk -F "[-]" '{print $3}'|awk -F "[.]" '{print $1}'`
+	    if [[ -z "${centosVersion}" ]] && [[ ! -z `cat /etc/centos-release|grep "release 8"` ]]
+	    then
+            centosVersion=8
+	    fi
+
 		release="centos"
 		installType='yum -y install'
 		removeType='yum -y remove'
 		upgrade="yum update -y --skip-broken"
 	elif [[ ! -z `cat /etc/issue | grep -i "debian" | grep -v grep` ]] || [[ ! -z `cat /proc/version | grep -i "debian" | grep -v grep` ]]
     then
+        if [[ ! -z `cat /etc/issue|grep -i "8"` ]]
+        then
+            debianVersion=8
+        fi
 		release="debian"
 		installType='apt -y install'
 		upgrade="apt update -y"
@@ -19,9 +28,9 @@ checkSystem(){
 	elif [[ ! -z `cat /etc/issue | grep -i "ubuntu" | grep -v grep` ]] || [[ ! -z `cat /proc/version | grep -i "ubuntu" | grep -v grep` ]]
 	then
 		release="ubuntu"
-		installType='apt -y install'
-		upgrade="apt update -y"
-		removeType='apt --purge remove'
+		installType='apt-get -y install'
+		upgrade="apt-get update -y"
+		removeType='apt-get --purge remove'
     fi
     if [[ -z ${release} ]]
     then
@@ -54,21 +63,26 @@ initVar(){
     # 3.v2ray-core[xtls] 安装
     coreInstallType=
 
+    # 核心安装path
+    coreInstallPath=
+
+    # v2ctl Path
+    ctlPath=
     # 1.全部安装
     # 2.个性化安装
     v2rayAgentInstallType=
 
     # 当前的个性化安装方式 01234
-    currentCustomInstallType=
+    currentInstallProtocolType=
 
     # 选择的个性化安装方式
     selectCustomInstallType=
 
     # v2ray-core配置文件的路径
-    v2rayCoreConfigFilePath=
+    configPath=
 
     # xray-core配置文件的路径
-    xrayCoreConfigFilePath=
+    configPath=
 
     # 配置文件的path
     currentPath=
@@ -78,9 +92,6 @@ initVar(){
 
     # 安装时选择的core类型
     selectCoreType=
-
-
-
 
     # 默认core版本
     v2rayCoreVersion=
@@ -93,107 +104,85 @@ initVar(){
 
     # UUID
     currentUUID=
-    currentUUIDDirect=
+
+    # pingIPv6 pingIPv4
+    pingIPv4=
+    pingIPv6=
 }
 
 # 检测安装方式
 readInstallType(){
     coreInstallType=
-    v2rayAgentInstallType=
-    xrayCoreConfigFilePath=
-    v2rayCoreConfigFilePath=
+    configPath=
 
     # 1.检测安装目录
-    if [[ -d "/etc/v2ray-agent"  ]]
+    if [[ -d "/etc/v2ray-agent" ]]
     then
         # 检测安装方式 v2ray-core
         if [[ -d "/etc/v2ray-agent/v2ray" && -f "/etc/v2ray-agent/v2ray/v2ray" && -f "/etc/v2ray-agent/v2ray/v2ctl" ]]
         then
-            if [[ -f "/etc/v2ray-agent/v2ray/config_full.json" ]]
+            if [[ -d "/etc/v2ray-agent/v2ray/conf" && -f "/etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json" ]]
             then
-                v2rayAgentInstallType=1
-                v2rayCoreConfigFilePath=/etc/v2ray-agent/v2ray/config_full.json
-                if [[ ! -z `cat /etc/v2ray-agent/v2ray/config_full.json|grep xtls` ]]
-                then
-                    coreInstallType=3
-                elif [[ -z `cat /etc/v2ray-agent/v2ray/config_full.json|grep xtls` ]]
-                then
-                    coreInstallType=2
-                fi
+                configPath=/etc/v2ray-agent/v2ray/conf/
 
-            elif [[ -d "/etc/v2ray-agent/v2ray/conf" && -f "/etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json" ]]
-            then
-                v2rayAgentInstallType=2
-                v2rayCoreConfigFilePath=/etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json
-                if [[ ! -z `cat /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json|grep xtls` ]]
+                if [[ -z `cat /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json|grep xtls` ]]
                 then
-                    coreInstallType=3
-                elif [[ -z `cat /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json|grep xtls` ]]
-                then
+                    # 不带XTLS的v2ray-core
                     coreInstallType=2
+                    coreInstallPath=/etc/v2ray-agent/v2ray/v2ray
+                    ctlPath=/etc/v2ray-agent/v2ray/v2ctl
+                elif [[ ! -z `cat /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json|grep xtls` ]]
+                then
+                    # 带XTLS的v2ray-core
+                    coreInstallPath=/etc/v2ray-agent/v2ray/v2ray
+                    ctlPath=/etc/v2ray-agent/v2ray/v2ctl
+                    coreInstallType=3
                 fi
             fi
-         fi
+        fi
 
         if [[ -d "/etc/v2ray-agent/xray" && -f "/etc/v2ray-agent/xray/xray" ]]
         then
             # 这里检测xray-core
-            if [[ -f "/etc/v2ray-agent/xray/config_full.json" ]]
+            if [[ -d "/etc/v2ray-agent/xray/conf" && -f "/etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json" ]]
             then
-                xrayCoreConfigFilePath=/etc/v2ray-agent/xray/config_full.json
-                v2rayAgentInstallType=1
-                if [[ ! -z `cat /etc/v2ray-agent/xray/config_full.json` ]]
-                then
-                    coreInstallType=1
-                fi
-
-            elif [[ -d "/etc/v2ray-agent/xray/conf" && -f "/etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json" ]]
-            then
-                xrayCoreConfigFilePath=/etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json
-                v2rayAgentInstallType=2
-
-                if [[ ! -z `cat /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json` ]]
-                then
-                    coreInstallType=1
-                fi
+                # xray-core
+                configPath=/etc/v2ray-agent/xray/conf/
+                coreInstallPath=/etc/v2ray-agent/xray/xray
+                ctlPath=/etc/v2ray-agent/xray/xray
+                coreInstallType=1
             fi
         fi
     fi
 }
 
-# 检测个性化安装的方式
-readCustomInstallType(){
-    customConf=
-    currentCustomInstallType=
-    if [[ "${v2rayAgentInstallType}" = "2" ]]
-    then
-        local customConf=
-        if [[ "${coreInstallType}" = "1" ]]
+# 读取协议类型
+readInstallProtocolType(){
+    currentInstallProtocolType=
+    
+    while read row
+    do
+        if [[ ! -z `echo ${row}|grep VLESS_TCP_inbounds` ]]
         then
-            customConf="/etc/v2ray-agent/xray/conf"
-        else
-            customConf="/etc/v2ray-agent/v2ray/conf"
+            currentInstallProtocolType=${currentInstallProtocolType}'0'
         fi
+        if [[ ! -z `echo ${row}|grep VLESS_WS_inbounds` ]]
+        then
+            currentInstallProtocolType=${currentInstallProtocolType}'1'
+        fi
+        if [[ ! -z `echo ${row}|grep VMess_TCP_inbounds` ]]
+        then
+            currentInstallProtocolType=${currentInstallProtocolType}'2'
+        fi
+        if  [[ ! -z `echo ${row}|grep VMess_WS_inbounds` ]]
+        then
+            currentInstallProtocolType=${currentInstallProtocolType}'3'
+        fi
+    done < <(echo `ls ${configPath}|grep -v grep|grep inbounds.json|awk -F "[.]" '{print $1}'`)
 
-        while read row
-        do
-            if [[ ! -z `echo ${row}|grep VLESS_TCP_inbounds` ]]
-            then
-                currentCustomInstallType=${currentCustomInstallType}'0'
-            fi
-            if [[ ! -z `echo ${row}|grep VLESS_WS_inbounds` ]]
-            then
-                currentCustomInstallType=${currentCustomInstallType}'1'
-            fi
-            if [[ ! -z `echo ${row}|grep VMess_TCP_inbounds` ]]
-            then
-                currentCustomInstallType=${currentCustomInstallType}'2'
-            fi
-            if  [[ ! -z `echo ${row}|grep VMess_WS_inbounds` ]]
-            then
-                currentCustomInstallType=${currentCustomInstallType}'3'
-            fi
-        done < <(echo `ls ${customConf}|grep -v grep|grep inbounds.json|awk -F "[.]" '{print $1}'`)
+    if [[ -f "/etc/v2ray-agent/trojan/trojan-go" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
+    then
+        currentInstallProtocolType=${currentInstallProtocolType}'4'
     fi
 }
 
@@ -201,36 +190,46 @@ readCustomInstallType(){
 readConfigHostPathUUID(){
     currentPath=
     currentUUID=
-    currentUUIDDirect=
     currentHost=
-    # currentPath
-    if [[ ! -z "${v2rayCoreConfigFilePath}" ]]
+    currentPort=
+    currentAdd=
+    # 读取path
+    if [[ ! -z "${configPath}" ]]
     then
-        local path=`cat ${v2rayCoreConfigFilePath}|jq .inbounds[0].settings.fallbacks|jq -c '.[].path'|awk -F "[\"][/]" '{print $2}'|awk -F "[\"]" '{print $1}'|tail -n +2|head -n 1`
+        local path=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.fallbacks|jq -c '.[].path'|awk -F "[\"][/]" '{print $2}'|awk -F "[\"]" '{print $1}'|tail -n +2|head -n 1`
         if [[ ! -z "${path}" ]]
         then
-            currentPath=${path:0:4}
-        fi
-    elif [[ ! -z "${xrayCoreConfigFilePath}" ]]
-    then
-        local path=`cat ${xrayCoreConfigFilePath}|jq .inbounds[0].settings.fallbacks|jq -c '.[].path'|awk -F "[\"][/]" '{print $2}'|awk -F "[\"]" '{print $1}'|tail -n +2|head -n 1`
-        if [[ ! -z "${path}" ]]
-        then
-            currentPath=${path:0:4}
+            if [[ `echo ${path:0-3}` = "vws" ]]
+            then
+                currentPath=`echo ${path}|awk -F "[v][w][s]" '{print $1}'`
+            elif [[ `echo ${path:0-2}` = "ws" ]]
+            then
+                currentPath=`echo ${path}|awk -F "[w][s]" '{print $1}'`
+            elif [[ `echo ${path:0-2}` = "tcp" ]]
+            then
+                currentPath=`echo ${path}|awk -F "[t][c][p]" '{print $1}'`
+            fi
+
         fi
     fi
-
-    # currentHost currentUUID currentUUIDDirect
     if [[ "${coreInstallType}" = "1" ]]
     then
-        currentHost=`cat ${xrayCoreConfigFilePath}|jq .inbounds[0].streamSettings.xtlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
-        currentUUID=`cat ${xrayCoreConfigFilePath}|jq .inbounds[0].settings.clients[0].id|awk -F '["]' '{print $2}'`
-        currentUUIDDirect=`cat ${xrayCoreConfigFilePath}|jq .inbounds[0].settings.clients[1].id|awk -F '["]' '{print $2}'`
+        currentHost=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].streamSettings.xtlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
+        currentUUID=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients[0].id|awk -F '["]' '{print $2}'`
+        currentAdd=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients[0].add|awk -F '["]' '{print $2}'`
+        currentPort=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].port`
+
     elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
     then
-        currentHost=`cat ${v2rayCoreConfigFilePath}|jq .inbounds[0].streamSettings.xtlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
-        currentUUID=`cat ${v2rayCoreConfigFilePath}|jq .inbounds[0].settings.clients[0].id|awk -F '["]' '{print $2}'`
-        currentUUIDDirect=`cat ${v2rayCoreConfigFilePath}|jq .inbounds[0].settings.clients[1].id|awk -F '["]' '{print $2}'`
+        if [[ "${coreInstallType}" = "3" ]]
+        then
+            currentHost=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].streamSettings.xtlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
+        else
+            currentHost=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].streamSettings.tlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
+        fi
+        currentAdd=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients[0].add|awk -F '["]' '{print $2}'`
+        currentUUID=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients[0].id|awk -F '["]' '{print $2}'`
+        currentPort=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].port`
     fi
 }
 
@@ -260,7 +259,7 @@ cleanUp(){
 initVar
 checkSystem
 readInstallType
-readCustomInstallType
+readInstallProtocolType
 readConfigHostPathUUID
 
 
@@ -312,7 +311,7 @@ installTools(){
     echoContent skyBlue "\n进度  $1/${totalProgress} : 安装工具"
     if [[ "${release}" = "centos" ]]
     then
-        echoContent green " ---> 检查安装jq、nginx epel源、yum-utils"
+        echoContent green " ---> 检查安装jq、nginx epel源、yum-utils、semanage"
         # jq epel源
         if [[ -z `command -v jq` ]]
         then
@@ -328,18 +327,22 @@ installTools(){
                 rpm -qa|grep -v grep|grep nginx|xargs rpm -e > /dev/null 2>&1
             fi
         fi
+
         if [[ "${centosVersion}" = "6" ]]
         then
             nginxEpel="http://nginx.org/packages/centos/6/x86_64/RPMS/nginx-1.18.0-1.el6.ngx.x86_64.rpm"
+            rpm -ivh ${nginxEpel} > /etc/v2ray-agent/error.log 2>&1
         elif [[ "${centosVersion}" = "7" ]]
         then
             nginxEpel="http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm"
+            policyCoreUtils="policycoreutils-python.x86_64"
+            rpm -ivh ${nginxEpel} > /etc/v2ray-agent/error.log 2>&1
         elif [[ "${centosVersion}" = "8" ]]
         then
             nginxEpel="http://nginx.org/packages/centos/8/x86_64/RPMS/nginx-1.18.0-1.el8.ngx.x86_64.rpm"
+            policyCoreUtils="policycoreutils-python-utils-2.9-9.el8.noarch"
+            # rpm -ivh ${nginxEpel} > /etc/v2ray-agent/error.log 2>&1
         fi
-        # nginx epel源
-        rpm -ivh ${nginxEpel} > /etc/v2ray-agent/error.log 2>&1
 
         # yum-utils
         if [[ "${centosVersion}" = "8" ]]
@@ -374,31 +377,31 @@ installTools(){
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w wget` ]]
     then
         echoContent green " ---> 安装wget"
-        ${installType} wget > /dev/null
+        ${installType} wget > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w curl` ]]
     then
         echoContent green " ---> 安装curl"
-        ${installType} curl > /dev/null
+        ${installType} curl > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w unzip` ]]
     then
         echoContent green " ---> 安装unzip"
-        ${installType} unzip > /dev/null
+        ${installType} unzip > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w socat` ]]
     then
         echoContent green " ---> 安装socat"
-        ${installType} socat > /dev/null
+        ${installType} socat > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w tar` ]]
     then
         echoContent green " ---> 安装tar"
-        ${installType} tar > /dev/null
+        ${installType} tar > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep cron` ]]
@@ -406,15 +409,15 @@ installTools(){
         echoContent green " ---> 安装crontabs"
         if [[ "${release}" = "ubuntu" ]] || [[ "${release}" = "debian" ]]
         then
-            ${installType} cron > /dev/null
+            ${installType} cron > /dev/null 2>&1
         else
-            ${installType} crontabs > /dev/null
+            ${installType} crontabs > /dev/null 2>&1
         fi
     fi
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w jq` ]]
     then
         echoContent green " ---> 安装jq"
-        ${installType} jq > /dev/null
+        ${installType} jq > /dev/null 2>&1
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep binutils` ]]
@@ -422,16 +425,49 @@ installTools(){
         echoContent green " ---> 安装binutils"
         ${installType} binutils > /dev/null  2>&1
     fi
+
+    if [[ -z `find /bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep ping6` ]]
+    then
+        echoContent green " ---> 安装ping6"
+        ${installType} inetutils-ping > /dev/null 2>&1
+    fi
+
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w nginx` ]]
     then
         echoContent green " ---> 安装nginx"
-        ${installType} nginx > /dev/null
+        if [[ "${centosVersion}" = "8" ]]
+        then
+            rpm -ivh ${nginxEpel} > /etc/v2ray-agent/error.log 2>&1
+        else
+            ${installType} nginx > /dev/null 2>&1
+        fi
+
+        if [[ ! -z "${centosVersion}" ]]
+        then
+            systemctl daemon-reload
+            systemctl enable nginx
+        fi
+    fi
+
+    if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w semanage` ]]
+    then
+        echoContent green " ---> 安装semanage"
+        ${installType} bash-completion > /dev/null 2>&1
+        if [[ ! -z "${policyCoreUtils}" ]]
+        then
+            ${installType} ${policyCoreUtils} > /dev/null 2>&1
+        fi
+        if [[ ! -z `which semanage` ]]
+        then
+            semanage port -a -t http_port_t -p tcp 31300
+
+        fi
     fi
 
     if [[ -z `find /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin |grep -v grep|grep -w sudo` ]]
     then
         echoContent green " ---> 安装sudo"
-        ${installType} sudo > /dev/null
+        ${installType} sudo > /dev/null 2>&1
     fi
     # todo 关闭防火墙
 
@@ -496,7 +532,7 @@ initTLSNginxConfig(){
         # 修改配置
         echoContent green "\n ---> 配置Nginx"
         touch /etc/nginx/conf.d/alone.conf
-        echo "server {listen 80;server_name ${domain};root /usr/share/nginx/html;location ~ /.well-known {allow all;}location /test {return 200 'fjkvymb6len';}}" > /etc/nginx/conf.d/alone.conf
+        echo "server {listen 80;listen [::]:80;server_name ${domain};root /usr/share/nginx/html;location ~ /.well-known {allow all;}location /test {return 200 'fjkvymb6len';}}" > /etc/nginx/conf.d/alone.conf
         # 启动nginx
         handleNginx start
         echoContent yellow "\n检查IP是否设置为当前VPS"
@@ -517,25 +553,59 @@ initTLSNginxConfig(){
 
 # 修改nginx重定向配置
 updateRedirectNginxConf(){
+
 cat << EOF > /etc/nginx/conf.d/alone.conf
     server {
         listen 80;
+        listen [::]:80;
         server_name ${domain};
         return 301 https://${domain}$request_uri;
     }
-    server {
+EOF
+
+    if [[ "${debianVersion}" = "8" ]]
+    then
+cat << EOF >> /etc/nginx/conf.d/alone.conf
+        server {
         listen 31300;
         server_name ${domain};
         root /usr/share/nginx/html;
-#        location ~ /.well-known {allow all;}
-#        location /test {return 200 'fjkvymb6len';}
+        # location / {
+        #     add_header Strict-Transport-Security "max-age=63072000";
+        # }
+#       location ~ /.well-known {allow all;}
+#       location /test {return 200 'fjkvymb6len';}
     }
 EOF
+    else
+cat << EOF >> /etc/nginx/conf.d/alone.conf
+        server {
+            listen 31300;
+            server_name ${domain};
+            root /usr/share/nginx/html;
+            location / {
+                add_header Strict-Transport-Security "max-age=63072000";
+            }
+    #       location ~ /.well-known {allow all;}
+    #       location /test {return 200 'fjkvymb6len';}
+        }
+EOF
+    fi
+
 }
+
 # 检查ip
 checkIP(){
+    echoContent skyBlue " ---> 检查ipv4中"
     pingIP=`ping -c 1 -W 1000 ${domain}|sed '1{s/[^(]*(//;s/).*//;q;}'`
-    if [[ ! -z "${pingIP}" ]] && [[ `echo ${pingIP}|grep '^\([1-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)$'` ]]
+    if [[ -z "${pingIP}" ]]
+    then
+        echoContent skyBlue " ---> 检查ipv6中"
+        pingIP=`ping6 -c 1 ${domain}|sed '1{s/[^(]*(//;s/).*//;q;}'`
+        pingIPv6=${pingIP}
+    fi
+
+    if [[ ! -z "${pingIP}" ]] # && [[ `echo ${pingIP}|grep '^\([1-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)\.\([0-9]\|[1-9][0-9]\|1[0-9][0-9]\|2[0-4][0-9]\|25[0-5]\)$'` ]]
     then
         echo
         read -p "当前域名的IP为 [${pingIP}]，是否正确[y/n]？" domainStatus
@@ -563,8 +633,13 @@ installTLS(){
     if [[ -z `ls /etc/v2ray-agent/tls|grep ${domain}.crt` ]] && [[ -z `ls /etc/v2ray-agent/tls|grep ${domain}.key` ]]
     then
         echoContent green " ---> 安装TLS证书"
+        if [[ ! -z "${pingIPv6}" ]]
+        then
+            sudo ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 >/dev/null
+        else
+            sudo ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 >/dev/null
+        fi
 
-        sudo ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 >/dev/null
         ~/.acme.sh/acme.sh --installcert -d ${domain} --fullchainpath /etc/v2ray-agent/tls/${domain}.crt --keypath /etc/v2ray-agent/tls/${domain}.key --ecc >/dev/null
         if [[ -z `cat /etc/v2ray-agent/tls/${domain}.crt` ]]
         then
@@ -590,6 +665,11 @@ installTLS(){
         if [[ "${reInstallStatus}" = "y" ]]
         then
             rm -rf /etc/v2ray-agent/tls/*
+            if [[ "${tlsStatus}" = "已过期" ]]
+            then
+                rm -rf /root/.acme.sh/${domain}_ecc/*
+            fi
+
             installTLS $1
         fi
     fi
@@ -601,6 +681,7 @@ initNginxConfig(){
         cat << EOF > /etc/nginx/conf.d/alone.conf
 server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     root /usr/share/nginx/html;
     location ~ /.well-known {allow all;}
@@ -631,6 +712,7 @@ randomPathFunction(){
         if [[ -z "${customPath}" ]]
         then
             customPath=`head -n 50 /dev/urandom|sed 's/[^a-z]//g'|strings -n 4|tr 'A-Z' 'a-z'|head -1`
+            currentPath=${customPath:0:4}
         fi
     fi
     echoContent yellow "path：${customPath}"
@@ -1276,11 +1358,7 @@ installV2RayService(){
     then
         rm -rf /etc/systemd/system/v2ray.service
         touch /etc/systemd/system/v2ray.service
-        execStart='/etc/v2ray-agent/v2ray/v2ray -config /etc/v2ray-agent/v2ray/config_full.json'
-        if [[ ! -z ${selectCustomInstallType} ]]
-        then
-            execStart='/etc/v2ray-agent/v2ray/v2ray -confdir /etc/v2ray-agent/v2ray/conf'
-        fi
+        execStart='/etc/v2ray-agent/v2ray/v2ray -confdir /etc/v2ray-agent/v2ray/conf'
     cat << EOF > /etc/systemd/system/v2ray.service
 [Unit]
 Description=V2Ray - A unified platform for anti-censorship
@@ -1314,11 +1392,7 @@ installXrayService(){
     then
         rm -rf /etc/systemd/system/xray.service
         touch /etc/systemd/system/xray.service
-        execStart='/etc/v2ray-agent/xray/xray run -config /etc/v2ray-agent/xray/config_full.json'
-        if [[ ! -z ${selectCustomInstallType} ]]
-        then
-            execStart='/etc/v2ray-agent/xray/xray run -confdir /etc/v2ray-agent/xray/conf'
-        fi
+        execStart='/etc/v2ray-agent/xray/xray run -confdir /etc/v2ray-agent/xray/conf'
     cat << EOF > /etc/systemd/system/xray.service
 [Unit]
 Description=Xray - A unified platform for anti-censorship
@@ -1436,7 +1510,7 @@ handleXray(){
     then
         if [[ -z `ps -ef|grep -v grep|grep xray` ]] && [[ "$1" = "start" ]]
         then
-            /usr/bin/xray/xray -config /etc/v2ray-agent/xray/config_full.json & > /dev/null 2>&1
+            /usr/bin/xray/xray -config /etc/v2ray-agent/xray/02_VLESS_TCP_inbounds.json & > /dev/null 2>&1
         elif [[ ! -z `ps -ef|grep -v grep|grep xray` ]] && [[ "$1" = "stop" ]]
         then
             ps -ef|grep -v grep|grep xray|awk '{print $2}'|xargs kill -9
@@ -1519,11 +1593,9 @@ initV2RayConfig(){
         if [[ "${historyUUIDStatus}" = "y" ]]
         then
             uuid=${currentUUID}
-            uuidDirect=${currentUUIDDirect}
         fi
     else
         uuid=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-        uuidDirect=`/etc/v2ray-agent/v2ray/v2ctl uuid`
     fi
     if [[ -z "${uuid}" ]]
     then
@@ -1531,378 +1603,10 @@ initV2RayConfig(){
         uuid=`/etc/v2ray-agent/v2ray/v2ctl uuid`
     fi
 
-    if [[ -z "${uuidDirect}" ]] && [[ "${selectCoreType}" = "3" ]]
-    then
-        echoContent red "\n ---> uuid XTLS-direct/XTLS-splice读取错误，重新生成"
-        uuidDirect=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-    fi
-
-    if [[ "${uuid}" = "${uuidDirect}" ]]
-    then
-        echoContent red "\n ---> uuid重复，重新生成"
-        uuid=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-        uuidDirect=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-    fi
-    echoContent green "\n ---> 使用成功"
-
     rm -rf /etc/v2ray-agent/v2ray/conf/*
     rm -rf /etc/v2ray-agent/v2ray/config_full.json
-    if [[ "$1" = "all" ]] && [[ "${selectCoreType}" = "2" ]]
-    then
-        # default v2ray-core
-        cat << EOF > /etc/v2ray-agent/v2ray/config_full.json
-{
-  "log": {
-    "error": "/etc/v2ray-agent/v2ray/v2ray_error.log",
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "add": "${add}",
-            "email": "${domain}_VLESS_TLS_TCP"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "dest": 31296,
-            "xver": 0
-          },
-          {
-            "path": "/${customPath}",
-            "dest": 31299,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}tcp",
-            "dest": 31298,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}ws",
-            "dest": 31297,
-            "xver": 1
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
-              "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "port": 31299,
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": 1,
-            "level": 0,
-            "email": "${domain}_vmess_ws"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}"
-        }
-      }
-    },
-    {
-      "port": 31298,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "alterId": 1,
-            "email": "${domain}_vmess_tcp"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "http",
-            "request": {
-              "path": [
-                "/${customPath}tcp"
-              ]
-            }
-          }
-        }
-      }
-    },
-    {
-      "port": 31297,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "email": "${domain}_vless_ws"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}ws"
-        }
-      }
-    }
-  ],
-  "routing":{
-    "domainStrategy": "AsIs",
-    "rules": [
-      {
-        "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "blocked"
-      }
-    ]
-  },
-  "outbounds": [
-    {
-      "tag":"direct",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      }
-    },
-    {
-      "tag": "blocked",
-      "protocol": "blackhole",
-      "settings": {}
-    }
-  ],
-  "dns": {
-    "servers": [
-      "74.82.42.42",
-      "8.8.8.8",
-      "8.8.4.4",
-      "1.1.1.1",
-      "localhost"
-    ]
-  }
-}
-EOF
-    elif [[ "$1" = "all" ]] && [[ "${selectCoreType}" = "3" ]]
-    then
-        # 需锁定4.32.1
-        cat << EOF > /etc/v2ray-agent/v2ray/config_full.json
-{
-  "log": {
-    "error": "/etc/v2ray-agent/v2ray/v2ray_error.log",
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "add": "${add}",
-            "flow":"xtls-rprx-origin",
-            "email": "${domain}_VLESS_XTLS/TLS-origin_TCP"
-          },
-          {
-            "id": "${uuidDirect}",
-            "flow":"xtls-rprx-direct",
-            "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "dest": 31296,
-            "xver": 0
-          },
-          {
-            "path": "/${customPath}",
-            "dest": 31299,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}tcp",
-            "dest": 31298,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}ws",
-            "dest": 31297,
-            "xver": 1
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "xtls",
-        "xtlsSettings": {
-          "alpn": [
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
-              "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "port": 31299,
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": 1,
-            "level": 0,
-            "email": "${domain}_vmess_ws"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}"
-        }
-      }
-    },
-    {
-      "port": 31298,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "alterId": 1,
-            "email": "${domain}_vmess_tcp"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "http",
-            "request": {
-              "path": [
-                "/${customPath}tcp"
-              ]
-            }
-          }
-        }
-      }
-    },
-    {
-      "port": 31297,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "email": "${domain}_vless_ws"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}ws"
-        }
-      }
-    }
-  ],
-  "routing":{
-    "domainStrategy": "AsIs",
-    "rules": [
-      {
-        "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "blocked"
-      }
-    ]
-  },
-  "outbounds": [
-    {
-      "tag":"direct",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      }
-    },
-    {
-      "tag": "blocked",
-      "protocol": "blackhole",
-      "settings": {}
-    }
-  ],
-  "dns": {
-    "servers": [
-      "74.82.42.42",
-      "8.8.8.8",
-      "8.8.4.4",
-      "1.1.1.1",
-      "localhost"
-    ]
-  }
-}
-EOF
-    elif [[ "$1" = "custom" ]]
-    then
-        # custom v2ray-core
-        cat << EOF > /etc/v2ray-agent/v2ray/conf/00_log.json
+
+    cat << EOF > /etc/v2ray-agent/v2ray/conf/00_log.json
 {
   "log": {
     "error": "/etc/v2ray-agent/v2ray/v2ray_error.log",
@@ -1910,25 +1614,8 @@ EOF
   }
 }
 EOF
-        # outbounds
-       cat << EOF > /etc/v2ray-agent/v2ray/conf/10_outbounds.json
-{
-    "outbounds": [
-        {
-          "protocol": "freedom",
-          "settings": {
-            "domainStrategy": "UseIPv4"
-          }
-        },
-        {
-          "tag": "blocked",
-          "protocol": "blackhole",
-          "settings": {}
-        }
-    ]
-}
-EOF
-       cat << EOF > /etc/v2ray-agent/v2ray/conf/09_routing.json
+    # routing
+    cat << EOF > /etc/v2ray-agent/v2ray/conf/09_routing.json
 {
     "routing":{
         "domainStrategy": "AsIs",
@@ -1944,8 +1631,53 @@ EOF
   }
 }
 EOF
-        # dns
-       cat << EOF > /etc/v2ray-agent/v2ray/conf/11_dns.json
+    # outbounds
+    if [[ ! -z "${pingIPv6}" ]]
+    then
+        cat << EOF > /etc/v2ray-agent/v2ray/conf/10_ipv6_outbounds.json
+{
+    "outbounds": [
+        {
+          "protocol": "freedom",
+          "settings": {},
+          "tag": "direct"
+        }
+    ]
+}
+EOF
+else
+
+    cat << EOF > /etc/v2ray-agent/v2ray/conf/10_ipv4_outbounds.json
+{
+    "outbounds": [
+        {
+          "protocol": "freedom",
+          "settings": {
+            "domainStrategy": "UseIPv4"
+          },
+          "tag": "IPv4-out"
+        }
+    ]
+}
+EOF
+fi
+
+
+    cat << EOF > /etc/v2ray-agent/v2ray/conf/10_bt_outbounds.json
+{
+    "outbounds": [
+        {
+          "protocol": "blackhole",
+          "settings": {},
+          "tag": "blocked"
+        }
+    ]
+}
+EOF
+
+
+    # dns
+    cat << EOF > /etc/v2ray-agent/v2ray/conf/11_dns.json
 {
     "dns": {
         "servers": [
@@ -1958,171 +1690,130 @@ EOF
   }
 }
 EOF
-        # VLESS_TCP_TLS/XTLS
-        # 没有path则回落到此端口
-        local fallbacksList='{"dest":31296,"xver":0}'
+    # VLESS_TCP_TLS/XTLS
+    # 回落nginx
+    local fallbacksList='{"dest":31300,"xver":0}'
 
-        if [[ -z `echo ${selectCustomInstallType}|grep 4` ]]
-        then
-            fallbacksList='{"dest":31300,"xver":0}'
-        fi
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 4` || "$1" = "all" ]]
+    then
+        # 回落trojan-go
+        fallbacksList='{"dest":31296,"xver":0}'
+    fi
 
-        # VLESS_WS_TLS
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 1` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'ws","dest":31297,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/v2ray/conf/03_VLESS_WS_inbounds.json
+    # VLESS_WS_TLS
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 1` || "$1" = "all" ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'ws","dest":31297,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/v2ray/conf/03_VLESS_WS_inbounds.json
 {
 "inbounds":[
-        {
-      "port": 31297,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "email": "${domain}_vless_ws"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}ws"
-        }
+    {
+  "port": 31297,
+  "listen": "127.0.0.1",
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "email": "${domain}_vless_ws"
       }
+    ],
+    "decryption": "none"
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "none",
+    "wsSettings": {
+      "acceptProxyProtocol": true,
+      "path": "/${customPath}ws"
     }
+  }
+}
+]
+}
+EOF
+    fi
+
+    # VMess_TCP
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 2` || "$1" = "all"  ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'tcp","dest":31298,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/v2ray/conf/04_VMess_TCP_inbounds.json
+{
+"inbounds":[
+{
+  "port": 31298,
+  "listen": "127.0.0.1",
+  "protocol": "vmess",
+  "tag":"VMessTCP",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "alterId": 1,
+        "email": "${domain}_vmess_tcp"
+      }
     ]
-}
-EOF
-        fi
-# VMess_TCP
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 2` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'tcp","dest":31298,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/v2ray/conf/04_VMess_TCP_inbounds.json
-{
-"inbounds":[
-    {
-      "port": 31298,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "tag":"VMessTCP",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "alterId": 1,
-            "email": "${domain}_vmess_tcp"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "http",
-            "request": {
-              "path": [
-                "/${customPath}tcp"
-              ]
-            }
-          }
-        }
-      }
-    }
-]
-}
-EOF
-        fi
-        # VMess_WS
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 3` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'","dest":31299,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/v2ray/conf/05_VMess_WS_inbounds.json
-{
-"inbounds":[
-{
-      "port": 31299,
-      "protocol": "vmess",
-      "tag":"VMessWS",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": 1,
-            "add": "${add}",
-            "level": 0,
-            "email": "${domain}_vmess_ws"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}"
-        }
-      }
-    }
-]
-}
-EOF
-        fi
-        # VLESS_TCP
-        if [[ "${selectCoreType}" = "2" ]]
-        then
-            cat << EOF > /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json
-{
-  "inbounds":[
-    {
-      "port": 443,
-      "protocol": "vless",
-      "tag":"VLESSTCP",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "add": "${add}",
-            "email": "${domain}_VLESS_TLS_TCP"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-            ${fallbacksList}
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
-              "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
-            }
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "none",
+    "tcpSettings": {
+      "acceptProxyProtocol": true,
+      "header": {
+        "type": "http",
+        "request": {
+          "path": [
+            "/${customPath}tcp"
           ]
         }
       }
     }
-  ]
+  }
+}
+]
 }
 EOF
-        elif [[ "${selectCoreType}" = "3" ]]
-        then
+    fi
 
+    # VMess_WS
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 3` || "$1" = "all"  ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'vws","dest":31299,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/v2ray/conf/05_VMess_WS_inbounds.json
+{
+"inbounds":[
+{
+  "port": 31299,
+  "protocol": "vmess",
+  "tag":"VMessWS",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "alterId": 1,
+        "add": "${add}",
+        "email": "${domain}_vmess_ws"
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "none",
+    "wsSettings": {
+      "acceptProxyProtocol": true,
+      "path": "/${customPath}vws"
+    }
+  }
+}
+]
+}
+EOF
+    fi
+
+    # VLESS_TCP
+    if [[ "${selectCoreType}" = "2" ]]
+    then
         cat << EOF > /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json
 {
   "inbounds":[
@@ -2135,13 +1826,7 @@ EOF
           {
             "id": "${uuid}",
             "add": "${add}",
-            "flow":"xtls-rprx-origin",
-            "email": "${domain}_VLESS_XTLS/TLS-origin_TCP"
-          },
-          {
-            "id": "${uuidDirect}",
-            "flow":"xtls-rprx-direct",
-            "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
+            "email": "${domain}_VLESS_TLS_TCP"
           }
         ],
         "decryption": "none",
@@ -2151,8 +1836,8 @@ EOF
       },
       "streamSettings": {
         "network": "tcp",
-        "security": "xtls",
-        "xtlsSettings": {
+        "security": "tls",
+        "tlsSettings": {
           "alpn": [
             "http/1.1"
           ],
@@ -2168,11 +1853,50 @@ EOF
   ]
 }
 EOF
-        fi
-
+    elif [[ "${selectCoreType}" = "3" ]]
+    then
+        cat << EOF > /etc/v2ray-agent/v2ray/conf/02_VLESS_TCP_inbounds.json
+{
+"inbounds":[
+{
+  "port": 443,
+  "protocol": "vless",
+  "tag":"VLESSTCP",
+  "settings": {
+    "clients": [
+     {
+        "id": "${uuid}",
+        "add":"${add}",
+        "flow":"xtls-rprx-direct",
+        "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": [
+        ${fallbacksList}
+    ]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "xtls",
+    "xtlsSettings": {
+      "alpn": [
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
+          "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
+        }
+      ]
+    }
+  }
+}
+]
+}
+EOF
     fi
 }
-
 
 # 初始化Xray 配置文件
 initXrayConfig(){
@@ -2184,11 +1908,9 @@ initXrayConfig(){
         if [[ "${historyUUIDStatus}" = "y" ]]
         then
             uuid=${currentUUID}
-            uuidDirect=${currentUUIDDirect}
         fi
     else
         uuid=`/etc/v2ray-agent/xray/xray uuid`
-        uuidDirect=`/etc/v2ray-agent/xray/xray uuid`
     fi
     if [[ -z "${uuid}" ]]
     then
@@ -2196,205 +1918,12 @@ initXrayConfig(){
         uuid=`/etc/v2ray-agent/xray/xray uuid`
     fi
 
-    if [[ -z "${uuidDirect}" ]] && [[ "${selectCoreType}" = "1" ]]
-    then
-        echoContent red "\n ---> uuid XTLS-direct/XTLS-splice读取错误，重新生成"
-        uuidDirect=`/etc/v2ray-agent/xray/xray uuid`
-    fi
-
-    if [[ "${uuid}" = "${uuidDirect}" ]]
-    then
-        echoContent red "\n ---> uuid重复，重新生成"
-        uuid=`/etc/v2ray-agent/xray/xray uuid`
-        uuidDirect=`/etc/v2ray-agent/xray/xray uuid`
-    fi
     echoContent green "\n ---> 使用成功"
 
     rm -rf /etc/v2ray-agent/xray/conf/*
-    rm -rf /etc/v2ray-agent/xray/config_full.json
-    if [[ "$1" = "all" ]]
-    then
-        # default v2ray-core
-        cat << EOF > /etc/v2ray-agent/xray/config_full.json
-{
-  "log": {
-    "error": "/etc/v2ray-agent/xray/xray_error.log",
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "add": "${add}",
-            "flow":"xtls-rprx-origin",
-            "email": "${domain}_VLESS_XTLS/TLS-origin_TCP"
-          },
-          {
-            "id": "${uuidDirect}",
-            "flow":"xtls-rprx-direct",
-            "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "dest": 31296,
-            "xver": 0
-          },
-          {
-            "path": "/${customPath}",
-            "dest": 31299,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}tcp",
-            "dest": 31298,
-            "xver": 1
-          },
-          {
-            "path": "/${customPath}ws",
-            "dest": 31297,
-            "xver": 1
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "xtls",
-        "xtlsSettings": {
-          "alpn": [
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
-              "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "port": 31299,
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": 1,
-            "level": 0,
-            "email": "${domain}_vmess_ws"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}"
-        }
-      }
-    },
-    {
-      "port": 31298,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "alterId": 1,
-            "email": "${domain}_vmess_tcp"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "http",
-            "request": {
-              "path": [
-                "/${customPath}tcp"
-              ]
-            }
-          }
-        }
-      }
-    },
-    {
-      "port": 31297,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "email": "${domain}_vless_ws"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}ws"
-        }
-      }
-    }
-  ],
-  "routing":{
-    "domainStrategy": "AsIs",
-    "rules": [
-      {
-        "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "blocked"
-      }
-    ]
-  },
-  "outbounds": [
-    {
-      "tag":"direct",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      }
-    },
-    {
-      "tag": "blocked",
-      "protocol": "blackhole",
-      "settings": {}
-    }
-  ],
-  "dns": {
-    "servers": [
-      "74.82.42.42",
-      "8.8.8.8",
-      "8.8.4.4",
-      "1.1.1.1",
-      "localhost"
-    ]
-  }
-}
-EOF
-    elif [[ "$1" = "custom" ]]
-    then
-        # custom xray-core
-        cat << EOF > /etc/v2ray-agent/xray/conf/00_log.json
+
+       # log
+    cat << EOF > /etc/v2ray-agent/xray/conf/00_log.json
 {
   "log": {
     "error": "/etc/v2ray-agent/xray/xray_error.log",
@@ -2402,7 +1931,8 @@ EOF
   }
 }
 EOF
-      cat << EOF > /etc/v2ray-agent/xray/conf/09_routing.json
+    # routing
+    cat << EOF > /etc/v2ray-agent/xray/conf/09_routing.json
 {
     "routing":{
         "domainStrategy": "AsIs",
@@ -2419,42 +1949,51 @@ EOF
 }
 EOF
 
-        # outbounds
-       cat << EOF > /etc/v2ray-agent/xray/conf/10_outbounds.json
+   # outbounds
+    if [[ ! -z "${pingIPv6}" ]]
+    then
+        cat << EOF > /etc/v2ray-agent/xray/conf/10_ipv6_outbounds.json
+{
+    "outbounds": [
+        {
+          "protocol": "freedom",
+          "settings": {},
+          "tag": "direct"
+        }
+    ]
+}
+EOF
+
+else
+    cat << EOF > /etc/v2ray-agent/xray/conf/10_ipv4_outbounds.json
 {
     "outbounds": [
         {
           "protocol": "freedom",
           "settings": {
             "domainStrategy": "UseIPv4"
-          }
-        },
-        {
-          "tag": "blocked",
-          "protocol": "blackhole",
-          "settings": {}
+          },
+          "tag": "IPv4-out"
         }
     ]
 }
 EOF
-      cat << EOF > /etc/v2ray-agent/v2ray/conf/09_routing.json
+fi
+
+    cat << EOF > /etc/v2ray-agent/xray/conf/10_bt_outbounds.json
 {
-    "routing":{
-        "domainStrategy": "AsIs",
-        "rules": [
-          {
-            "type": "field",
-            "protocol": [
-              "bittorrent"
-            ],
-            "outboundTag": "blocked"
-          }
-        ]
-  }
+    "outbounds": [
+        {
+          "protocol": "blackhole",
+          "settings": {},
+          "tag": "blocked"
+        }
+    ]
 }
 EOF
-        # dns
-       cat << EOF > /etc/v2ray-agent/xray/conf/11_dns.json
+
+    # dns
+    cat << EOF > /etc/v2ray-agent/xray/conf/11_dns.json
 {
     "dns": {
         "servers": [
@@ -2467,177 +2006,173 @@ EOF
   }
 }
 EOF
-        # VLESS_TCP_TLS/XTLS
-        # 没有path则回落到此端口
-        local fallbacksList='{"dest":31296,"xver":0}'
+    # VLESS_TCP_TLS/XTLS
+    # 回落nginx
+    local fallbacksList='{"dest":31300,"xver":0}'
 
-        if [[ -z `echo ${selectCustomInstallType}|grep 4` ]]
-        then
-            fallbacksList='{"dest":31300,"xver":0}'
-        fi
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 4` || "$1" = "all" ]]
+    then
+        # 回落trojan-go
+        fallbacksList='{"dest":31296,"xver":0}'
+    fi
 
-        # VLESS_WS_TLS
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 1` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'ws","dest":31297,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/xray/conf/03_VLESS_WS_inbounds.json
+    # VLESS_WS_TLS
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 1` || "$1" = "all" ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'ws","dest":31297,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/xray/conf/03_VLESS_WS_inbounds.json
 {
 "inbounds":[
-        {
-      "port": 31297,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "email": "${domain}_vless_ws"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}ws"
-        }
+    {
+  "port": 31297,
+  "listen": "127.0.0.1",
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "email": "${domain}_vless_ws"
       }
+    ],
+    "decryption": "none"
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "none",
+    "wsSettings": {
+      "acceptProxyProtocol": true,
+      "path": "/${customPath}ws"
     }
+  }
+}
+]
+}
+EOF
+    fi
+
+    # VMess_TCP
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 2` || "$1" = "all"  ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'tcp","dest":31298,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/xray/conf/04_VMess_TCP_inbounds.json
+{
+"inbounds":[
+{
+  "port": 31298,
+  "listen": "127.0.0.1",
+  "protocol": "vmess",
+  "tag":"VMessTCP",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "alterId": 1,
+        "email": "${domain}_vmess_tcp"
+      }
     ]
-}
-EOF
-        fi
-# VMess_TCP
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 2` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'tcp","dest":31298,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/xray/conf/04_VMess_TCP_inbounds.json
-{
-"inbounds":[
-    {
-      "port": 31298,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "tag":"VMessTCP",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "level": 0,
-            "alterId": 1,
-            "email": "${domain}_vmess_tcp"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none",
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "http",
-            "request": {
-              "path": [
-                "/${customPath}tcp"
-              ]
-            }
-          }
-        }
-      }
-    }
-]
-}
-EOF
-        fi
-        # VMess_WS
-        if [[ ! -z `echo ${selectCustomInstallType}|grep 3` ]]
-        then
-            fallbacksList=${fallbacksList}',{"path":"/'${customPath}'","dest":31299,"xver":1}'
-            cat << EOF > /etc/v2ray-agent/xray/conf/05_VMess_WS_inbounds.json
-{
-"inbounds":[
-{
-      "port": 31299,
-      "protocol": "vmess",
-      "tag":"VMessWS",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": 1,
-            "add": "${add}",
-            "level": 0,
-            "email": "${domain}_vmess_ws"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "acceptProxyProtocol": true,
-          "path": "/${customPath}"
-        }
-      }
-    }
-]
-}
-EOF
-        fi
-
-        # VLESS_TCP
-
-        cat << EOF > /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json
-{
-  "inbounds":[
-    {
-      "port": 443,
-      "protocol": "vless",
-      "tag":"VLESSTCP",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "add": "${add}",
-            "flow":"xtls-rprx-origin",
-            "email": "${domain}_VLESS_XTLS/TLS-origin_TCP"
-          },
-          {
-            "id": "${uuidDirect}",
-            "flow":"xtls-rprx-direct",
-            "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-            ${fallbacksList}
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "xtls",
-        "xtlsSettings": {
-          "alpn": [
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
-              "keyFile": "/etc/v2ray-agent/tls/${domain}.key"
-            }
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "none",
+    "tcpSettings": {
+      "acceptProxyProtocol": true,
+      "header": {
+        "type": "http",
+        "request": {
+          "path": [
+            "/${customPath}tcp"
           ]
         }
       }
     }
-  ]
+  }
+}
+]
 }
 EOF
-
     fi
+
+    # VMess_WS
+    if [[ ! -z `echo ${selectCustomInstallType}|grep 3` || "$1" = "all"  ]]
+    then
+        fallbacksList=${fallbacksList}',{"path":"/'${customPath}'vws","dest":31299,"xver":1}'
+        cat << EOF > /etc/v2ray-agent/xray/conf/05_VMess_WS_inbounds.json
+{
+"inbounds":[
+{
+  "port": 31299,
+  "protocol": "vmess",
+  "tag":"VMessWS",
+  "settings": {
+    "clients": [
+      {
+        "id": "${uuid}",
+        "alterId": 1,
+        "add": "${add}",
+        "email": "${domain}_vmess_ws"
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "none",
+    "wsSettings": {
+      "acceptProxyProtocol": true,
+      "path": "/${customPath}vws"
+    }
+  }
 }
+]
+}
+EOF
+    fi
+
+    # VLESS_TCP
+    cat << EOF > /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json
+{
+"inbounds":[
+{
+  "port": 443,
+  "protocol": "vless",
+  "tag":"VLESSTCP",
+  "settings": {
+    "clients": [
+     {
+        "id": "${uuid}",
+        "add":"${add}",
+        "flow":"xtls-rprx-direct",
+        "email": "${domain}_VLESS_XTLS/TLS-direct_TCP"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": [
+        ${fallbacksList}
+    ]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "xtls",
+    "xtlsSettings": {
+      "minVersion": "1.2",
+      "alpn": [
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
+          "keyFile": "/etc/v2ray-agent/tls/${domain}.key",
+          "ocspStapling": 3600,
+          "usage":"encipherment"
+        }
+      ]
+    }
+  }
+}
+]
+}
+EOF
+}
+
 # 初始化Trojan-Go配置
 initTrojanGoConfig(){
 
@@ -2674,9 +2209,6 @@ initTrojanGoConfig(){
     },
     "router": {
         "enabled": false
-    },
-    "tcp":{
-        "prefer_ipv4":true
     }
 }
 EOF
@@ -2686,8 +2218,8 @@ EOF
 customCDNIP(){
     echoContent skyBlue "\n进度 $1/${totalProgress} : 添加DNS智能解析"
     echoContent yellow "\n 移动:104.19.45.117"
-    echoContent yellow " 联通:104.16.160.136"
-    echoContent yellow " 电信:104.17.78.198"
+    echoContent yellow " 联通:amp.cloudflare.com"
+    echoContent yellow " 电信:www.digitalocean.com"
     echoContent skyBlue "----------------------------"
     read -p '是否使用？[y/n]:' dnsProxy
     if [[ "${dnsProxy}" = "y" ]]
@@ -2718,50 +2250,36 @@ defaultBase64Code(){
 
     local path=$5
     local add=$6
-    if [[ ${type} = "tcp" ]]
+    if [[ "${type}" = "vlesstcp" ]]
     then
+        local VLESSID=`echo ${id}|awk -F "[\"]" '{print $2}'`
+        local VLESSEmail=`echo ${ps}|awk -F "[\"]" '{print $2}'`
+        if [[ "${coreInstallType}" = "1" ]]
+        then
+            echoContent yellow " ---> 通用格式(VLESS+TCP+TLS/xtls-rprx-direct)"
+            echoContent green "    vless://${VLESSID}@${host}:${port}?encryption=none&security=xtls&type=tcp&host=${host}&headerType=none&flow=xtls-rprx-direct#${VLESSEmail}\n"
+            echoContent yellow " ---> 二维码 VLESS(VLESS+TCP+TLS/xtls-rprx-direct)"
+            echoContent green "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3A%2F%2F${VLESSID}%40${host}%3A${port}%3F${encryption}%3Dnone%26security%3Dxtls%26type%3Dtcp%26${host}%3D${host}%26headerType%3Dnone%26flow%3Dxtls-rprx-direct%23${VLESSEmail}\n"
 
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","net":"tcp","add":"'${host}'","allowInsecure":0,"method":"none","peer":""}'|sed 's#/#\\\/#g'|base64`
-        qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
-        echoContent yellow " ---> 通用json(tcp+tls)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","net":"tcp","add":"'${host}'","allowInsecure":0,"method":"none","peer":""}\n'
-        # 通用Vmess
-        echoContent yellow " ---> 通用vmess(tcp+tls)链接"
-        echoContent green "    vmess://${qrCodeBase64Default}\n"
-        echo "通用vmess(tcp+tls)链接: " > /etc/v2ray-agent/v2ray/usersv2ray.conf
-        echo "   vmess://${qrCodeBase64Default}" >> /etc/v2ray-agent/v2ray/usersv2ray.conf
-    elif [[ ${type} = "wss" ]]
-    then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
-        qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
-        echoContent yellow " ---> 通用json(ws+tls)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}\n'
-        echoContent yellow " ---> 通用vmess(ws+tls)链接"
-        echoContent green "    vmess://${qrCodeBase64Default}\n"
-        echo "通用vmess(ws+tls)链接: " > /etc/v2ray-agent/v2ray/usersv2ray.conf
-        echo "   vmess://${qrCodeBase64Default}" >> /etc/v2ray-agent/v2ray/usersv2ray.conf
-    elif [[ "${type}" = "h2" ]]
-    then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"h2","add":"'${add}'","allowInsecure":0,"method":"none","peer":""}'|sed 's#/#\\\/#g'|base64`
-        qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
-        echoContent red "通用json--->"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"h2","add":"'${add}'","allowInsecure":0,"method":"none","peer":""}\n'
-    elif [[ "${type}" = "vlesstcp" ]]
-    then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"tcp","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
-        qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
-        echo "通用vmess(VLESS+TCP+TLS)链接: " > /etc/v2ray-agent/v2ray/usersv2ray.conf
-        echo "   vmess://${qrCodeBase64Default}" >> /etc/v2ray-agent/v2ray/usersv2ray.conf
-        echoContent yellow " ---> 通用json(VLESS+TCP+TLS)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"host":"'${host}'","type":"none","net":"tcp","add":"'${host}'","allowInsecure":0,"method":"none","peer":""}\n'
-        echoContent green '    V2Ray v4.27.4+ 目前无通用订阅，需要手动配置，VLESS TCP、XTLS和TCP大部分一样，其余内容不变，请注意手动输入的流控flow类型，v2ray-core v4.32.1之后不支持XTLS，Xray-core支持，建议使用Xray-core\n'
+            echoContent yellow " ---> 通用格式(VLESS+TCP+TLS/xtls-rprx-splice)"
+            echoContent green "    vless://${VLESSID}@${host}:${port}?encryption=none&security=xtls&type=tcp&host=${host}&headerType=none&flow=xtls-rprx-splice#${VLESSEmail}\n"
+            echoContent yellow " ---> 二维码 VLESS(VLESS+TCP+TLS/xtls-rprx-splice)"
+            echoContent green "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3A%2F%2F${VLESSID}%40${host}%3A${port}%3F${encryption}%3Dnone%26security%3Dxtls%26type%3Dtcp%26${host}%3D${host}%26headerType%3Dnone%26flow%3Dxtls-rprx-splice%23${VLESSEmail}\n"
+
+        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+        then
+            echoContent yellow " ---> 通用格式(VLESS+TCP+TLS)"
+            echoContent green "    vless://${VLESSID}@${host}:${port}?security=tls&encryption=none&host=${host}&headerType=none&type=tcp#${VLESSEmail}\n"
+            echoContent yellow " ---> 二维码 VLESS(VLESS+TCP+TLS)"
+            echoContent green "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3a%2f%2f${VLESSID}%40${host}%3a${port}%3fsecurity%3dtls%26encryption%3dnone%26host%3d${host}%26headerType%3dnone%26type%3dtcp%23${VLESSEmail}\n"
+        fi
 
     elif [[ "${type}" = "vmessws" ]]
     then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
+        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":'${ps}',"tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"none","path":"/'${path}'","net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
         qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
         echoContent yellow " ---> 通用json(VMess+WS+TLS)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}\n'
+        echoContent green '    {"port":"'${port}'","ps":'${ps}',"tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"none","path":"/'${path}'","net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}\n'
         echoContent yellow " ---> 通用vmess(VMess+WS+TLS)链接"
         echoContent green "    vmess://${qrCodeBase64Default}\n"
         echoContent yellow " ---> 二维码 vmess(VMess+WS+TLS)"
@@ -2769,20 +2287,25 @@ defaultBase64Code(){
 
     elif [[ "${type}" = "vmesstcp" ]]
     then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"http","path":'${path}',"net":"tcp","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'","obfs":"http","obfsParam":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
+        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":'${ps}',"tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"http","path":"/'${path}'","net":"tcp","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'","obfs":"http","obfsParam":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
         qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
         echoContent yellow " ---> 通用json(VMess+TCP+TLS)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"http","path":'${path}',"net":"tcp","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'","obfs":"http","obfsParam":"'${host}'"}\n'
+        echoContent green '    {"port":"'${port}'","ps":'${ps}',"tls":"tls","id":'"${id}"',"aid":"1","v":"2","host":"'${host}'","type":"http","path":"/'${path}'","net":"tcp","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'","obfs":"http","obfsParam":"'${host}'"}\n'
         echoContent yellow " ---> 通用vmess(VMess+TCP+TLS)链接"
         echoContent green "    vmess://${qrCodeBase64Default}\n"
         echoContent yellow " ---> 二维码 vmess(VMess+TCP+TLS)"
         echoContent green "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vmess://${qrCodeBase64Default}\n"
+
     elif [[ "${type}" = "vlessws" ]]
     then
-        qrCodeBase64Default=`echo -n '{"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}'|sed 's#/#\\\/#g'|base64`
-        qrCodeBase64Default=`echo ${qrCodeBase64Default}|sed 's/ //g'`
-        echoContent yellow " ---> 通用json(VLESS+WS+TLS)"
-        echoContent green '    {"port":"'${port}'","ps":"'${ps}'","tls":"tls","id":'"${id}"',"aid":"0","v":"2","host":"'${host}'","type":"none","path":'${path}',"net":"ws","add":"'${add}'","allowInsecure":0,"method":"none","peer":"'${host}'"}\n'
+        local VLESSID=`echo ${id}|awk -F "[\"]" '{print $2}'`
+        local VLESSEmail=`echo ${ps}|awk -F "[\"]" '{print $2}'`
+        echoContent yellow " ---> 通用格式(VLESS+WS+TLS)"
+        echoContent green "    vless://${VLESSID}@${add}:${port}?encryption=none&security=tls&type=ws&host=${host}&path=%2f${path}#${VLESSEmail}\n"
+
+        echoContent yellow " ---> 二维码 VLESS(VLESS+TCP+TLS/XTLS)"
+        echoContent green "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3A%2F%2F${VLESSID}%40${add}%3A${port}%3Fencryption%3Dnone%26security%3Dtls%26type%3Dws%26host%3D${host}%26path%3D%252f${path}%23${VLESSEmail}"
+
     elif [[ "${type}" = "trojan" ]]
     then
         # URLEncode
@@ -2809,188 +2332,94 @@ defaultBase64Code(){
 showAccounts(){
     readInstallType
     readConfigHostPathUUID
-    readCustomInstallType
-    showStatus=
+    readInstallProtocolType
     echoContent skyBlue "\n进度 $1/${totalProgress} : 账号"
 
-
-    if [[ "${v2rayAgentInstallType}" = "1" ]]
+    # VLESS TCP
+    if [[ ! -z "${configPath}" ]] && [[ ! -z `echo ${currentInstallProtocolType} | grep 0` || -z "${currentInstallProtocolType}"  ]]
     then
-        showStatus=true
-        local configPath=
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            configPath=${xrayCoreConfigFilePath}
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            configPath=${v2rayCoreConfigFilePath}
-        fi
-        # VLESS tcp
-        local tcp=`cat ${configPath}|jq .inbounds[0]`
-        local port=`echo ${tcp}|jq .port`
-        local tcpID=`echo ${tcp}|jq .settings.clients[0].id`
-        local tcpEmail="`echo ${tcp}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-        local CDNADD=`echo ${tcp}|jq .settings.clients[0].add|awk -F '["]' '{print $2}'`
+        echoContent skyBlue "\n===================== VLESS TCP TLS/XTLS-direct/XTLS-splice ======================\n"
 
-        # XTLS Direct
-        local tcpIDirect=`echo ${tcp}|jq .settings.clients[1].id`
-        local tcpDirectEmail="`echo ${tcp}|jq .settings.clients[1].email|awk -F '["]' '{print $2}'`"
-
-
-         # VLESS ws
-        local vlessWS=`cat ${configPath}|jq .inbounds[3]`
-        local vlessWSID=`echo ${vlessWS}|jq .settings.clients[0].id`
-        local vlessWSEmail="`echo ${vlessWS}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-        local vlessWSPath=`echo ${vlessWS}|jq .streamSettings.wsSettings.path`
-
-        # Vmess ws
-        local ws=`cat ${configPath}|jq .inbounds[1]`
-        local wsID=`echo ${ws}|jq .settings.clients[0].id`
-        local wsEmail="`echo ${ws}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-        local wsPath=`echo ${ws}|jq .streamSettings.wsSettings.path`
-
-        # Vmess tcp
-        local vmessTCP=`cat ${configPath}|jq .inbounds[2]`
-        local vmessTCPID=`echo ${vmessTCP}|jq .settings.clients[0].id`
-        local vmessTCPEmail="`echo ${vmessTCP}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-        local vmessTCPath=`echo ${vmessTCP}|jq .streamSettings.tcpSettings.header.request.path[0]`
-
-        if [[ "${coreInstallType}" = "3" || "${coreInstallType}" = "1" ]]
-        then
-            echoContent skyBlue "\n============================ VLESS TCP TLS/XTLS-origin ==========================="
-            defaultBase64Code vlesstcp ${tcpEmail} "${tcpID}" "${currentHost}:${port}" ${add}
-
-            echoContent skyBlue "\n============================ VLESS TCP TLS/XTLS-direct/XTLS-splice ==========================="
-            defaultBase64Code vlesstcp ${tcpDirectEmail} "${tcpIDirect}" "${currentHost}:${port}" ${add}
-
-        elif [[ "${coreInstallType}" = "2" ]]
-        then
-            echoContent skyBlue "\n============================ VLESS TCP TLS ======================================="
-            defaultBase64Code vlesstcp ${tcpEmail} "${tcpID}" "${currentHost}:${port}" ${add}
-        fi
-
-        echoContent skyBlue "\n================================ VLESS WS TLS CDN ================================"
-        defaultBase64Code vlessws ${vlessWSEmail} "${vlessWSID}" "${currentHost}:${port}" "${vlessWSPath}" ${CDNADD}
-
-        echoContent skyBlue "\n================================ VMess WS TLS CDN ================================"
-        defaultBase64Code vmessws ${wsEmail} "${wsID}" "${currentHost}:${port}" "${wsPath}" ${CDNADD}
-
-        echoContent skyBlue "\n================================= VMess TCP TLS  ================================="
-        defaultBase64Code vmesstcp ${vmessTCPEmail} "${vmessTCPID}" "${currentHost}:${port}" "${vmessTCPath}" "${currentHost}"
-
-    elif [[ "${v2rayAgentInstallType}" = "2" ]]
-    then
-        local configPath=
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            configPath=${xrayCoreConfigFilePath}
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            configPath=${v2rayCoreConfigFilePath}
-        fi
-
-        showStatus=true
-
-        # VLESS tcp
-        local tcp=`cat ${configPath}|jq .inbounds[0]`
-        local port=`echo ${tcp}|jq .port`
-        local tcpID=`echo ${tcp}|jq .settings.clients[0].id`
-        local tcpEmail="`echo ${tcp}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-
-        local CDNADD=`echo ${tcp}|jq .settings.clients[0].add|awk -F '["]' '{print $2}'`
-        # XTLS Direct
-        local tcpIDirect=`echo ${tcp}|jq .settings.clients[1].id`
-        local tcpDirectEmail="`echo ${tcp}|jq .settings.clients[1].email|awk -F '["]' '{print $2}'`"
-
-        if [[ "${coreInstallType}" = "3" || "${coreInstallType}" = "1" ]]
-        then
-            echoContent skyBlue "\n============================ VLESS TCP TLS/XTLS-origin ==========================="
-            defaultBase64Code vlesstcp ${tcpEmail} "${tcpID}" "${currentHost}:${port}" ${add}
-
-            echoContent skyBlue "\n============================ VLESS TCP TLS/XTLS-direct/XTLS-splice ==========================="
-            defaultBase64Code vlesstcp ${tcpDirectEmail} "${tcpIDirect}" "${currentHost}:${port}" ${add}
-
-        elif [[ "${coreInstallType}" = "2" ]]
-        then
-#            host=`echo ${tcp}|jq .streamSettings.tlsSettings.certificates[0].certificateFile|awk -F '[t][l][s][/]' '{print $2}'|awk -F '["]' '{print $1}'|awk -F '[.][c][r][t]' '{print $1}'`
-            echoContent skyBlue "\n============================ VLESS TCP TLS ======================================="
-            defaultBase64Code vlesstcp ${tcpEmail} "${tcpID}" "${currentHost}:${port}" ${add}
-        fi
-
-        if [[ ! -z "${currentCustomInstallType}" ]]
-        then
-            local coreType=
-            if [[ "${coreInstallType}" = "1" ]]
-            then
-                coreType=xray
-            elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-            then
-                coreType=v2ray
-            fi
-
-            if [[ ! -z `echo ${currentCustomInstallType}|grep 1` ]]
-            then
-                # VLESS ws
-                local vlessWS=`cat /etc/v2ray-agent/${coreType}/conf/03_VLESS_WS_inbounds.json|jq .inbounds[0]`
-                local vlessWSID=`echo ${vlessWS}|jq .settings.clients[0].id`
-                local vlessWSAdd=`echo ${tcp}|jq .settings.clients[0].add|awk -F '["]' '{print $2}'`
-                local vlessWSEmail="`echo ${vlessWS}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-                local vlessWSPath=`echo ${vlessWS}|jq .streamSettings.wsSettings.path`
-
-                echoContent skyBlue "\n================================ VLESS WS TLS CDN ================================"
-                defaultBase64Code vlessws ${vlessWSEmail} "${vlessWSID}" "${currentHost}:${port}" "${vlessWSPath}" ${CDNADD}
-            fi
-            if [[ ! -z `echo ${currentCustomInstallType}|grep 2` ]]
-            then
-
-                local vmessTCP=`cat /etc/v2ray-agent/${coreType}/conf/04_VMess_TCP_inbounds.json|jq .inbounds[0]`
-                local vmessTCPID=`echo ${vmessTCP}|jq .settings.clients[0].id`
-                local vmessTCPEmail="`echo ${vmessTCP}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-                local vmessTCPath=`echo ${vmessTCP}|jq .streamSettings.tcpSettings.header.request.path[0]`
-
-                echoContent skyBlue "\n================================= VMess TCP TLS  ================================="
-                defaultBase64Code vmesstcp ${vmessTCPEmail} "${vmessTCPID}" "${currentHost}:${port}" "${vmessTCPath}" "${currentHost}"
-            fi
-            if [[ ! -z `echo ${currentCustomInstallType}|grep 3` ]]
-            then
-
-                local ws=`cat /etc/v2ray-agent/${coreType}/conf/05_VMess_WS_inbounds.json|jq .inbounds[0]`
-                local wsID=`echo ${ws}|jq .settings.clients[0].id`
-                local wsEmail="`echo ${ws}|jq .settings.clients[0].email|awk -F '["]' '{print $2}'`"
-                local wsPath=`echo ${ws}|jq .streamSettings.wsSettings.path`
-
-                echoContent skyBlue "\n================================ VMess WS TLS CDN ================================"
-                defaultBase64Code vmessws ${wsEmail} "${wsID}" "${currentHost}:${port}" "${wsPath}" ${CDNADD}
-            fi
-        fi
+        cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients|jq -c '.[]'|while read user
+        do
+            defaultBase64Code vlesstcp `echo ${user}|jq .email` `echo ${user}|jq .id` "${currentHost}:${currentPort}" ${currentHost}
+        done
     fi
 
+    # VLESS WS
+    if [[ ! -z "${configPath}" ]] && [[ ! -z `echo ${currentInstallProtocolType} | grep 1` || -z "${currentInstallProtocolType}"  ]]
+    then
+        echoContent skyBlue "\n================================ VLESS WS TLS CDN ================================\n"
+
+        cat ${configPath}03_VLESS_WS_inbounds.json|jq .inbounds[0].settings.clients|jq -c '.[]'|while read user
+        do
+            defaultBase64Code vlessws `echo ${user}|jq .email` `echo ${user}|jq .id` "${currentHost}:${currentPort}" "${currentPath}ws" ${currentAdd}
+        done
+    fi
+
+    # VMess TCP
+    if [[ ! -z "${configPath}" ]] && [[ ! -z `echo ${currentInstallProtocolType}|grep 2` || -z "${currentInstallProtocolType}"  ]]
+    then
+        echoContent skyBlue "\n================================= VMess TCP TLS  =================================\n"
+
+        cat ${configPath}04_VMess_TCP_inbounds.json|jq .inbounds[0].settings.clients|jq -c '.[]'|while read user
+        do
+            defaultBase64Code vmesstcp `echo ${user}|jq .email` `echo ${user}|jq .id` "${currentHost}:${currentPort}" "${currentPath}tcp" "${currentHost}"
+        done
+    fi
+    # VMess WS
+    if [[ ! -z "${configPath}" ]] && [[ ! -z `echo ${currentInstallProtocolType} | grep 3` || -z "${currentInstallProtocolType}"  ]]
+    then
+        echoContent skyBlue "\n================================ VMess WS TLS CDN ================================\n"
+
+        cat ${configPath}05_VMess_WS_inbounds.json|jq .inbounds[0].settings.clients|jq -c '.[]'|while read user
+        do
+            defaultBase64Code vmessws `echo ${user}|jq .email` `echo ${user}|jq .id` "${currentHost}:${currentPort}" "${currentPath}vws" ${currentAdd}
+        done
+    fi
+
+    # trojan-go
     if [[ -d "/etc/v2ray-agent/" ]] && [[ -d "/etc/v2ray-agent/trojan/" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
     then
         showStatus=true
-        local trojanUUID=`cat /etc/v2ray-agent/trojan/config_full.json |jq .password[0]|awk -F '["]' '{print $2}'`
+#        local trojanUUID=`cat /etc/v2ray-agent/trojan/config_full.json |jq .password[0]|awk -F '["]' '{print $2}'`
         local trojanGoPath=`cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.path|awk -F '["]' '{print $2}'`
         local trojanGoAdd=`cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.add|awk -F '["]' '{print $2}'`
-        echoContent skyBlue "\n==================================  Trojan TLS  =================================="
-        defaultBase64Code trojan trojan ${trojanUUID} ${currentHost}
+        echoContent skyBlue "\n==================================  Trojan TLS  ==================================\n"
+        cat /etc/v2ray-agent/trojan/config_full.json |jq .password|while read user
+        do
+            trojanUUID=`echo ${user}|awk -F '["]' '{print $2}'`
+            if [[ ! -z "${trojanUUID}" ]]
+            then
+                defaultBase64Code trojan trojan ${trojanUUID} ${currentHost}
+            fi
+        done
 
-        echoContent skyBlue "\n================================  Trojan WS TLS   ================================"
+
+        echoContent skyBlue "\n================================  Trojan WS TLS   ================================\n"
         if [[ -z ${trojanGoAdd} ]]
         then
             trojanGoAdd=${currentHost}
         fi
-        defaultBase64Code trojangows trojan ${trojanUUID} ${currentHost} ${trojanGoPath} ${trojanGoAdd}
+
+        cat /etc/v2ray-agent/trojan/config_full.json |jq .password|while read user
+        do
+            trojanUUID=`echo ${user}|awk -F '["]' '{print $2}'`
+            if [[ ! -z "${trojanUUID}" ]]
+            then
+                defaultBase64Code trojangows trojan ${trojanUUID} ${currentHost} ${trojanGoPath} ${trojanGoAdd}
+            fi
+
+        done
     fi
-    if [[ -z ${showStatus} ]]
-    then
-        echoContent red " ---> 未安装"
-    fi
+
 }
 
 # 更新伪装站
 updateNginxBlog(){
     echoContent skyBlue "\n进度 $1/${totalProgress} : 更换伪装站点"
     echoContent red "=============================================================="
+    echoContent yellow "# 如需自定义，请手动复制模版文件到 /usr/share/nginx/html \n"
     echoContent yellow "1.数据统计模版"
     echoContent yellow "2.下雪动画用户注册登录模版"
     echoContent yellow "3.物流大数据服务平台模版"
@@ -3003,10 +2432,11 @@ updateNginxBlog(){
         rm -rf /usr/share/nginx/html
         if [[ ! -z `wget --help|grep show-progress` ]]
         then
-            wget -q -q --show-progress -P /usr/share/nginx https://raw.githubusercontent.com/mack-a/v2ray-agent/master/fodder/blog/unable/html${selectInstallNginxBlogType}.zip > /dev/null
+            wget -c -q --show-progress -P /usr/share/nginx https://raw.githubusercontent.com/mack-a/v2ray-agent/master/fodder/blog/unable/html${selectInstallNginxBlogType}.zip > /dev/null
         else
-            wget -c -P /etc/v2ray-agent/v2ray/ https://github.com/v2fly/v2ray-core/releases/download/${version}/v2ray-linux-64.zip > /dev/null 2>&1
+            wget -c -P --show-progress -P /usr/share/nginx https://raw.githubusercontent.com/mack-a/v2ray-agent/master/fodder/blog/unable/html${selectInstallNginxBlogType}.zip > /dev/null
         fi
+
         unzip -o  /usr/share/nginx/html${selectInstallNginxBlogType}.zip -d /usr/share/nginx/html > /dev/null
         rm -f /usr/share/nginx/html${selectInstallNginxBlogType}.zip*
         echoContent green " ---> 更换伪装博客成功"
@@ -3058,279 +2488,331 @@ unInstall(){
 
 # 修改V2Ray CDN节点
 updateV2RayCDN(){
-    echoContent skyBlue "\n进度 $1/${totalProgress} : 修改CDN节点"
-    if [[ ! -z "${v2rayAgentInstallType}" ]]
-    then
-        local configPath=
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            configPath=${xrayCoreConfigFilePath}
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            configPath=${v2rayCoreConfigFilePath}
-        fi
 
-        local add=`cat ${configPath}|grep -v grep|grep add`
-        if [[ ! -z ${add} ]]
+    # todo 重构此方法
+    echoContent skyBlue "\n进度 $1/${totalProgress} : 修改CDN节点"
+
+    if [[ ! -z ${currentAdd} ]]
+    then
+        echoContent red "=============================================================="
+        echoContent yellow "1.CNAME www.digitalocean.com"
+        echoContent yellow "2.CNAME amp.cloudflare.com"
+        echoContent yellow "3.CNAME domain08.qiu4.ml"
+        echoContent yellow "4.手动输入"
+        echoContent red "=============================================================="
+        read -p "请选择:" selectCDNType
+        case ${selectCDNType} in
+        1)
+            setDomain="www.digitalocean.com"
+        ;;
+        2)
+            setDomain="amp.cloudflare.com"
+        ;;
+        3)
+            setDomain="domain08.qiu4.ml"
+        ;;
+        4)
+            read -p "请输入想要自定义CDN IP或者域名:" setDomain
+        ;;
+        esac
+
+        if [[ ! -z ${setDomain} ]]
         then
-            echoContent red "=============================================================="
-            echoContent yellow "1.CNAME www.digitalocean.com"
-            echoContent yellow "2.CNAME amp.cloudflare.com"
-            echoContent yellow "3.CNAME domain08.qiu4.ml"
-            echoContent yellow "4.手动输入"
-            echoContent red "=============================================================="
-            read -p "请选择:" selectCDNType
-            case ${selectCDNType} in
-            1)
-                setDomain="www.digitalocean.com"
-            ;;
-            2)
-                setDomain="amp.cloudflare.com"
-            ;;
-            3)
-                setDomain="domain08.qiu4.ml"
-            ;;
-            4)
-                read -p "请输入想要自定义CDN IP或者域名:" setDomain
-            ;;
-            esac
-            if [[ ! -z ${setDomain} ]]
+            if [[ ! -z ${currentAdd} ]]
             then
-                # v2ray
-                add=`echo ${add}|awk -F '["]' '{print $4}'`
+                sed -i "s/\"${currentAdd}\"/\"${setDomain}\"/g"  `grep "${currentAdd}" -rl ${configPath}02_VLESS_TCP_inbounds.json`
+            fi
+
+            if [[ `cat ${configPath}02_VLESS_TCP_inbounds.json|grep -v grep|grep add|awk -F '["]' '{print $4}'` = ${setDomain} ]]
+            then
+                echoContent green " ---> CDN修改成功"
+                if [[ "${coreInstallType}" = "1" ]]
+                then
+                    handleXray stop
+                    handleXray start
+                elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+                then
+                    handleV2Ray stop
+                    handleV2Ray start
+                fi
+
+            else
+                echoContent red " ---> 修改CDN失败"
+            fi
+
+            # trojan
+            if [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
+            then
+                add=`cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.add|awk -F '["]' '{print $2}'`
                 if [[ ! -z ${add} ]]
                 then
-                    sed -i "s/\"${add}\"/\"${setDomain}\"/g"  `grep "${add}" -rl ${configPath}`
-                fi
-
-                if [[ `cat ${configPath}|grep -v grep|grep add|awk -F '["]' '{print $4}'` = ${setDomain} ]]
-                then
-                    echoContent green " ---> V2Ray CDN修改成功"
-                    if [[ "${coreInstallType}" = "1" ]]
-                    then
-                        handleXray stop
-                        handleXray start
-                    elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-                    then
-                        handleV2Ray stop
-                        handleV2Ray start
-                    fi
-
-                else
-                    echoContent red " ---> 修改V2Ray CDN失败"
-                fi
-
-                # trojan
-                if [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
-                then
-                    add=`cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.add|awk -F '["]' '{print $2}'`
-                    if [[ ! -z ${add} ]]
-                    then
-                        sed -i "s/${add}/${setDomain}/g"  `grep "${add}" -rl /etc/v2ray-agent/trojan/config_full.json`
-                    fi
-                fi
-
-                if [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]] && [[ `cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.add|awk -F '["]' '{print $2}'` = ${setDomain} ]]
-                then
-                    echoContent green "\n ---> Trojan CDN修改成功"
-                    handleTrojanGo stop
-                    handleTrojanGo start
-                elif [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
-                then
-                    echoContent red " ---> 修改Trojan CDN失败"
+                    sed -i "s/${add}/${setDomain}/g"  `grep "${add}" -rl /etc/v2ray-agent/trojan/config_full.json`
                 fi
             fi
-        else
-            echoContent red " ---> 未安装可用类型"
+
+            if [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]] && [[ `cat /etc/v2ray-agent/trojan/config_full.json|jq .websocket.add|awk -F '["]' '{print $2}'` = ${setDomain} ]]
+            then
+                echoContent green "\n ---> Trojan CDN修改成功"
+                handleTrojanGo stop
+                handleTrojanGo start
+            elif [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
+            then
+                echoContent red " ---> 修改Trojan CDN失败"
+            fi
         fi
     else
-        echoContent red " ---> 未安装"
+        echoContent red " ---> 未安装可用类型"
     fi
     menu
 }
 
-# 重置UUID
-resetUUID(){
-    echoContent skyBlue "\n进度 $1/${totalProgress} : 重置UUID"
-    local resetStatus=false
-    if [[ "${coreInstallType}" = "1" ]]
+# manageUser 用户管理
+manageUser(){
+    echoContent skyBlue "\n进度 $1/${totalProgress} : 多用户管理"
+    echoContent skyBlue "-----------------------------------------------------"
+    echoContent yellow "1.添加用户"
+    echoContent yellow "2.删除用户"
+    echoContent skyBlue "-----------------------------------------------------"
+    read -p "请选择：" manageUserType
+    if [[ "${manageUserType}" = "1" ]]
     then
-        newUUID=`/etc/v2ray-agent/xray/xray uuid`
-        newDirectUUID=`/etc/v2ray-agent/xray/xray uuid`
-    elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+        addUser
+    elif [[ "${manageUserType}" = "2" ]]
     then
-        newUUID=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-        newDirectUUID=`/etc/v2ray-agent/v2ray/v2ctl uuid`
-    fi
-
-    if [[ ! -z "${v2rayAgentInstallType}" ]] && [[ -z "${currentCustomInstallType}" ]]
-    then
-
-        if [[ ! -z "${currentUUID}" ]]
-        then
-            read -p "是否自定义uuid？[y/n]:" customUUIDStatus
-            if [[ "${customUUIDStatus}" = "y" ]]
-            then
-                echo
-                read -p "请输入合法的uuid:" newUUID
-                echo
-            fi
-            if [[ "${coreInstallType}" = "1" ]]
-            then
-                sed -i "s/${currentUUID}/${newUUID}/g"  `grep "${currentUUID}" -rl /etc/v2ray-agent/xray/config_full.json`
-            elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-            then
-                sed -i "s/${currentUUID}/${newUUID}/g"  `grep "${currentUUID}" -rl /etc/v2ray-agent/v2ray/config_full.json`
-            fi
-        fi
-
-        if [[  ! -z "${currentUUIDDirect}"  ]]
-        then
-            echoContent skyBlue "-------------------------------------------------------------"
-            read -p "是否自定义 XTLS-direct-uuid？[y/n]:" customUUIDStatus
-            if [[ "${customUUIDStatus}" = "y" ]]
-            then
-                echo
-                read -p "请输入合法的uuid:" newDirectUUID
-                echo
-                if [[ "${newUUID}" = "${newDirectUUID}" ]]
-                then
-                    echoContent red " ---> 两个uuid不可重复"
-                    resetUUID 1
-                    exit 0;
-                fi
-            fi
-            if [[ "${coreInstallType}" = "1" ]]
-            then
-                sed -i "s/${currentUUIDDirect}/${newDirectUUID}/g"  `grep "${currentUUIDDirect}" -rl /etc/v2ray-agent/xray/config_full.json`
-            elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-            then
-                sed -i "s/${currentUUIDDirect}/${newDirectUUID}/g"  `grep "${currentUUIDDirect}" -rl /etc/v2ray-agent/v2ray/config_full.json`
-            fi
-
-        fi
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            echoContent green " ---> Xray UUID重置完毕"
-            handleXray stop
-            handleXray start
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            echoContent green " ---> V2Ray UUID重置完毕"
-            handleV2Ray stop
-            handleV2Ray start
-        fi
-
-        resetStatus=true
-
-    elif [[ ! -z "${v2rayAgentInstallType}" ]] && [[ ! -z "${currentCustomInstallType}" ]]
-    then
-        read -p "是否自定义uuid？[y/n]:" customUUIDStatus
-        if [[ "${customUUIDStatus}" = "y" ]]
-        then
-            echo
-            read -p "请输入合法的uuid:" newUUID
-            echo
-        fi
-        local configPathType=
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            configPathType=xray
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            configPathType=v2ray
-        fi
-
-        uuidCount=0
-        ls /etc/v2ray-agent/${configPathType}/conf|grep inbounds|while read row
-        do
-            cat /etc/v2ray-agent/${configPathType}/conf/${row}|jq .inbounds|jq -c '.[].settings.clients'|jq -c '.[].id'|while read row2
-            do
-                if [[ "${row}" = "02_VLESS_TCP_inbounds.json" ]]
-                then
-                    if [[ "${uuidCount}" != "1" ]]
-                    then
-                        oldUUID=`echo ${row2}|awk -F "[\"]" '{print $2}'`
-                        sed -i "s/${oldUUID}/${newUUID}/g"  `grep "${oldUUID}" -rl /etc/v2ray-agent/${configPathType}/conf/${row}`
-                    fi
-                    if [[ "${row}" = "02_VLESS_TCP_inbounds.json" ]]
-                    then
-                        uuidCount=1
-                    fi
-                else
-                    oldUUID=`echo ${row2}|awk -F "[\"]" '{print $2}'`
-                    sed -i "s/${oldUUID}/${newUUID}/g"  `grep "${oldUUID}" -rl /etc/v2ray-agent/${configPathType}/conf/${row}`
-                fi
-            done
-        done
-
-        if [[ ! -z "${currentUUIDDirect}" ]]
-        then
-            echoContent skyBlue "-------------------------------------------------------------"
-            read -p "是否自定义xtls-direct-uuid？[y/n]:" customUUIDStatus
-            if [[ "${customUUIDStatus}" = "y" ]]
-            then
-                echo
-                read -p "请输入合法的uuid:" newDirectUUID
-                echo
-                if [[ "${newUUID}" = "${newDirectUUID}" ]]
-                then
-                    echoContent red " ---> 两个uuid不可重复"
-                    resetUUID 1
-                    exit 0;
-                fi
-            fi
-            sed -i "s/${currentUUIDDirect}/${newDirectUUID}/g"  `grep "${currentUUIDDirect}" -rl /etc/v2ray-agent/${configPathType}/conf/02_VLESS_TCP_inbounds.json`
-        fi
-
-        if [[ "${coreInstallType}" = "1" ]]
-        then
-            echoContent green " ---> Xray UUID重置完毕"
-            handleXray stop
-            handleXray start
-        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
-        then
-            echoContent green " ---> V2Ray UUID重置完毕"
-            handleV2Ray stop
-            handleV2Ray start
-        fi
-        resetStatus=true
+        removeUser
     else
-        echoContent red " ---> 未使用脚本安装V2Ray"
-        menu
-        exit 0;
-    fi
-
-    if [[ -d "/etc/v2ray-agent" ]] && [[ -d "/etc/v2ray-agent/trojan" ]] && [[ -f "/etc/v2ray-agent/trojan/config_full.json" ]]
-    then
-        cat /etc/v2ray-agent/trojan/config_full.json|jq .password|jq -c '.[]'|while read row
-        do
-            oldUUID=`echo ${row}|awk -F "[\"]" '{print $2}'`
-            sed -i "s/${oldUUID}/${newUUID}/g"  `grep "${oldUUID}" -rl /etc/v2ray-agent/trojan/config_full.json`
-        done
-        echoContent green " ---> Trojan UUID重置完毕"
-        handleTrojanGo stop
-        handleTrojanGo start
-        resetStatus=true
-    else
-        echoContent red " ---> 未使用脚本安装Trojan"
-    fi
-    if [[ "${resetStatus}" = "true" ]]
-    then
-        readInstallType
-        readConfigHostPathUUID
-        readCustomInstallType
-        showAccounts 1
+        echoContent red " ---> 选择错误"
     fi
 }
 
+# 自定义uuid
+customUUID(){
+    read -p "是否自定义UUID ？[y/n]:" customUUIDStatus
+    echo
+    if [[ "${customUUIDStatus}" = "y" ]]
+    then
+        read -p "请输入合法的UUID:" currentCustomUUID
+        echo
+        if [[ -z "${currentCustomUUID}" ]]
+        then
+            echoContent red " ---> UUID不可为空"
+        else
+            local repeat=
+            cat ${configPath}02_VLESS_TCP_inbounds.json|jq '.inbounds[0].settings.clients[].id'|awk -F "[\"]" '{print $2}'|while read line
+            do
+                if [[ "${line}" = "${currentCustomUUID}" ]]
+                then
+                    echo repeat >/tmp/v2ray-agent
+                fi
+            done
+            if [[ -f "/tmp/v2ray-agent" && ! -z `cat /tmp/v2ray-agent` ]]
+            then
+                echoContent red " ---> UUID不可重复"
+                rm /tmp/v2ray-agent
+                exit;
+            fi
+        fi
+    fi
+}
+
+# 自定义email
+customUserEmail(){
+    read -p "是否自定义email ？[y/n]:" customEmailStatus
+    echo
+    if [[ "${customEmailStatus}" = "y" ]]
+    then
+        read -p "请输入合法的email:" currentCustomEmail
+        echo
+        if [[ -z "${currentCustomEmail}" ]]
+        then
+            echoContent red " ---> email不可为空"
+        else
+            local repeat=
+            cat ${configPath}02_VLESS_TCP_inbounds.json|jq '.inbounds[0].settings.clients[].email'|awk -F "[\"]" '{print $2}'|while read line
+            do
+                if [[ "${line}" = "${currentCustomEmail}" ]]
+                then
+                    echo repeat >/tmp/v2ray-agent
+                fi
+            done
+            if [[ -f "/tmp/v2ray-agent" && ! -z `cat /tmp/v2ray-agent` ]]
+            then
+                echoContent red " ---> email不可重复"
+                rm /tmp/v2ray-agent
+                exit;
+            fi
+        fi
+    fi
+}
+
+# 添加用户
+addUser(){
+    read -p "请输入要添加的用户数量：" userNum
+    echo
+    if [[ -z ${userNum} || ${userNum} -le 0 ]]
+    then
+        echoContent red " ---> 输入有误，请重新输入"
+        exit
+    fi
+
+    # 生成用户
+    local users=
+    local trojanGoUsers=
+    if [[ "${userNum}" = "1" ]]
+    then
+        customUUID
+        customUserEmail
+    fi
+
+    while [[ ${userNum} -gt 0 ]]
+    do
+        let userNum--
+        if [[ ! -z "${currentCustomUUID}" ]]
+        then
+            uuid=${currentCustomUUID}
+        else
+            uuid=`${ctlPath} uuid`
+        fi
+
+        if [[ ! -z "${currentCustomEmail}" ]]
+        then
+            email=${currentCustomEmail}
+        else
+            email=${currentHost}_${uuid}
+        fi
+
+        if [[ ${userNum} = 0 ]]
+        then
+            users=${users}{\"id\":\"${uuid}\",\"flow\":\"xtls-rprx-direct\",\"email\":\"${email}\"}
+
+            if [[ ! -z `echo ${currentInstallProtocolType}|grep 4` ]]
+            then
+                trojanGoUsers=${trojanGoUsers}\"${uuid}\"
+            fi
+        else
+            users=${users}{\"id\":\"${uuid}\",\"flow\":\"xtls-rprx-direct\",\"email\":\"${email}\"},
+
+            if [[ ! -z `echo ${currentInstallProtocolType}|grep 4` ]]
+            then
+                trojanGoUsers=${trojanGoUsers}\"${uuid}\",
+            fi
+        fi
+
+    done
+    # 兼容v2ray-core
+    if [[ "${coreInstallType}" = "2" ]]
+    then
+        users=`echo ${users}|sed 's/"flow":"xtls-rprx-direct",/"alterId":1,/g'`
+    fi
+
+    if [[ ! -z `echo ${currentInstallProtocolType} | grep 0` ]]
+    then
+        local vlessUsers=`echo ${users}|sed 's/"alterId":1,//g'`
+        local vlessTcpResult=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq -r '.inbounds[0].settings.clients += ['${vlessUsers}']'`
+        echo ${vlessTcpResult} | jq . > ${configPath}02_VLESS_TCP_inbounds.json
+    fi
+
+    users=`echo ${users}|sed 's/"flow":"xtls-rprx-direct",/"alterId":1,/g'`
+
+    if [[ ! -z `echo ${currentInstallProtocolType} | grep 1` ]]
+    then
+        local vlessUsers=`echo ${users}|sed 's/"alterId":1,//g'`
+        local vlessWsResult=`cat ${configPath}03_VLESS_WS_inbounds.json|jq -r '.inbounds[0].settings.clients += ['${vlessUsers}']'`
+        echo ${vlessWsResult}|jq . > ${configPath}03_VLESS_WS_inbounds.json
+    fi
+
+    if [[ ! -z `echo ${currentInstallProtocolType}|grep 2` ]]
+    then
+        local vmessTcpResult=`cat ${configPath}04_VMess_TCP_inbounds.json|jq -r '.inbounds[0].settings.clients += ['${users}']'`
+        echo ${vmessTcpResult}|jq . > ${configPath}04_VMess_TCP_inbounds.json
+    fi
+
+    if [[ ! -z `echo ${currentInstallProtocolType} | grep 3` ]]
+    then
+        local vmessWsResult=`cat ${configPath}05_VMess_WS_inbounds.json|jq -r '.inbounds[0].settings.clients += ['${users}']'`
+        echo ${vmessWsResult}|jq . > ${configPath}05_VMess_WS_inbounds.json
+    fi
+
+    if [[ ! -z `echo ${currentInstallProtocolType} | grep 4` ]]
+    then
+        local trojanResult=`cat ${configPath}../../trojan/config_full.json|jq -r '.password += ['${trojanGoUsers}']'`
+        echo ${trojanResult}|jq . > ${configPath}../../trojan/config_full.json
+        handleTrojanGo stop
+        handleTrojanGo start
+    fi
+
+
+    if [[ "${coreInstallType}" = "1" ]]
+    then
+        handleXray stop
+        handleXray start
+    elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+    then
+        handleV2Ray stop
+        handleV2Ray start
+    fi
+    echoContent green " ---> 添加完成"
+    showAccounts 1
+}
+
+# 移除用户
+removeUser(){
+    if [[ ! -z `echo ${currentInstallProtocolType} | grep 0` ]]
+    then
+        cat ${configPath}02_VLESS_TCP_inbounds.json|jq .inbounds[0].settings.clients|jq .[].email|awk -F "[\"]" '{print $2}'|awk '{print NR""":"$0}'
+        read -p "请选择要删除的用户编号[仅支持单个删除]:" delUserIndex
+        if [[ `cat ${configPath}02_VLESS_TCP_inbounds.json|jq -r '.inbounds[0].settings.clients|length'` -lt ${delUserIndex} ]]
+        then
+            echoContent red " ---> 选择错误"
+        else
+            delUserIndex=`expr ${delUserIndex} - 1`
+            local vlessTcpResult=`cat ${configPath}02_VLESS_TCP_inbounds.json|jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])'`
+            echo ${vlessTcpResult}|jq . > ${configPath}02_VLESS_TCP_inbounds.json
+        fi
+    fi
+    if [[ ! -z "${delUserIndex}" ]]
+    then
+        if [[ ! -z `echo ${currentInstallProtocolType} | grep 1` ]]
+        then
+            local vlessTcpResult=`cat ${configPath}03_VLESS_WS_inbounds.json|jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])'`
+            echo ${vlessTcpResult}|jq . > ${configPath}03_VLESS_WS_inbounds.json
+        fi
+
+        if [[ ! -z `echo ${currentInstallProtocolType}|grep 2` ]]
+        then
+            local vlessTcpResult=`cat ${configPath}04_VMess_TCP_inbounds.json|jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])'`
+            echo ${vlessTcpResult}|jq . > ${configPath}04_VMess_TCP_inbounds.json
+        fi
+
+        if [[ ! -z `echo ${currentInstallProtocolType} | grep 3` ]]
+        then
+            local vlessTcpResult=`cat ${configPath}05_VMess_WS_inbounds.json|jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])'`
+            echo ${vlessTcpResult}|jq . > ${configPath}05_VMess_WS_inbounds.json
+        fi
+
+        if [[ ! -z `echo ${currentInstallProtocolType} | grep 4` ]]
+        then
+            local trojanResult=`cat ${configPath}../../trojan/config_full.json|jq -r 'del(.password['${delUserIndex}'])'`
+            echo ${trojanResult}|jq . > ${configPath}../../trojan/config_full.json
+            handleTrojanGo stop
+            handleTrojanGo start
+        fi
+        if [[ "${coreInstallType}" = "1" ]]
+        then
+            handleXray stop
+            handleXray start
+        elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+        then
+            handleV2Ray stop
+            handleV2Ray start
+        fi
+    fi
+}
 # 更新脚本
 updateV2RayAgent(){
     echoContent skyBlue "\n进度  $1/${totalProgress} : 更新v2ray-agent脚本"
     wget -P /etc/v2ray-agent/ -N --no-check-certificate "https://raw.githubusercontent.com/mack-a/v2ray-agent/master/install.sh" && chmod 700 /etc/v2ray-agent/install.sh && vasma
 }
-
-
 
 # 安装BBR
 bbrInstall(){
@@ -3368,60 +2850,52 @@ checkLog(){
 
 
     echoContent skyBlue "-------------------------V2Ray/Xray--------------------------------"
-    echoContent yellow "1.查看info日志"
-    echoContent yellow "2.监听info日志"
-    echoContent yellow "3.查看error日志"
-    echoContent yellow "4.监听error日志"
-    echoContent yellow "5.清空V2Ray日志"
+    echoContent yellow "1.查看error日志"
+    echoContent yellow "2.监听error日志"
+    echoContent yellow "3.清空日志"
     echoContent skyBlue "-----------------------Trojan-Go------------------------------"
-    echoContent yellow "6.查看Trojan-Go日志"
-    echoContent yellow "7.监听Trojan-GO日志"
-    echoContent yellow "8.清空Trojan-GO日志"
+    echoContent yellow "4.查看Trojan-Go日志"
+    echoContent yellow "5.监听Trojan-GO日志"
+    echoContent yellow "6.清空Trojan-GO日志"
     echoContent skyBlue "-------------------------Nginx--------------------------------"
-    echoContent yellow "9.查看Nginx日志"
-    echoContent yellow "10.清空Nginx日志"
+    echoContent yellow "7.查看Nginx日志"
+    echoContent yellow "8.清空Nginx日志"
     echoContent red "=============================================================="
 
 
     read -p "请选择：" selectLogType
     case ${selectLogType} in
         1)
-            cat /etc/v2ray-agent/${coreType}_access.log
+            cat /etc/v2ray-agent/xray/xray_error.log
         ;;
         2)
-            tail -f /etc/v2ray-agent/${coreType}_access.log
+            tail -f /etc/v2ray-agent/xray/xray_error.log
         ;;
         3)
-            cat /etc/v2ray-agent/${coreType}_error.log
-        ;;
-        4)
-            tail -f /etc/v2ray-agent/${coreType}_error.log
-        ;;
-        5)
-            echo '' > /etc/v2ray-agent/${coreType}_access.log
-            echo '' > /etc/v2ray-agent/${coreType}_error.log
+            echo '' > /etc/v2ray-agent/xray/xray_error.log
             echoContent green " ---> 清空完毕"
         ;;
-        6)
+        4)
             cat /etc/v2ray-agent/trojan/trojan.log
         ;;
-        7)
+        5)
             tail -f /etc/v2ray-agent/trojan/trojan.log
         ;;
-        8)
+        6)
             echo '' > /etc/v2ray-agent/trojan/trojan.log
             echoContent green " ---> 清空完毕"
         ;;
-        9)
+        7)
             cat /var/log/nginx/access.log
         ;;
-        10)
+        8)
             echo '' > /var/log/nginx/access.log
         ;;
     esac
     sleep 1
     menu
 }
+
 # 脚本快捷方式
 aliasInstall(){
     if [[ -f "/root/install.sh" ]] && [[ -d "/etc/v2ray-agent" ]] && [[ ! -z `cat /root/install.sh|grep "作者：mack-a"` ]]
@@ -3442,10 +2916,135 @@ aliasInstall(){
     fi
 }
 
+# 检查ipv6、ipv4
+checkIPv6(){
+    pingIPv6=`ping6 -c 1 www.google.com|sed '2{s/[^(]*(//;s/).*//;q;}'|tail -n +2`
+    if [[ -z "${pingIPv6}" ]]
+    then
+        echoContent red " ---> 不支持ipv6"
+        exit;
+    fi
+}
+
+# ipv6 人机验证
+ipv6HumanVerification(){
+    if [[ -z "${configPath}" ]]
+    then
+        echoContent red " ---> 未安装，请使用脚本安装"
+        menu
+        exit;
+    fi
+
+    checkIPv6
+    echoContent skyBlue "\n功能 1/${totalProgress} : ipv6人机验证"
+    echoContent red "\n=============================================================="
+    echoContent yellow "1.添加"
+    echoContent yellow "2.卸载"
+    read -p "请选择:" ipv6Status
+    if [[ "${ipv6Status}" = "1" ]]
+    then
+        cat << EOF > ${configPath}09_routing.json
+{
+    "routing":{
+        "domainStrategy": "IPOnDemand",
+        "rules": [
+          {
+            "type": "field",
+            "protocol": [
+              "bittorrent"
+            ],
+            "outboundTag": "blocked"
+          },
+          {
+            "type": "field",
+            "domain": [
+              "domain:google.com",
+              "domain:google.com.hk"
+            ],
+            "outboundTag": "IP6-out"
+          }
+        ]
+  }
+}
+EOF
+
+        cat << EOF > ${configPath}10_ipv4_outbounds.json
+{
+  "outbounds": [
+    {
+          "protocol": "freedom",
+          "settings": {
+            "domainStrategy": "UseIPv4"
+          },
+          "tag": "IPv4-out"
+    },
+    {
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv6"
+      },
+      "tag": "IP6-out"
+    }
+  ]
+}
+EOF
+        echoContent green " ---> 人机验证修改成功"
+
+    elif [[ "${ipv6Status}" = "2" ]]
+    then
+        cat << EOF > ${configPath}09_routing.json
+{
+    "routing":{
+        "domainStrategy": "AsIs",
+        "rules": [
+          {
+            "type": "field",
+            "protocol": [
+              "bittorrent"
+            ],
+            "outboundTag": "blocked"
+          }
+        ]
+  }
+}
+EOF
+
+        cat << EOF > ${configPath}10_ipv4_outbounds.json
+{
+    "outbounds": [
+        {
+          "protocol": "freedom",
+          "settings": {
+            "domainStrategy": "UseIPv4"
+          },
+          "tag": "IPv4-out"
+        }
+    ]
+}
+EOF
+        echoContent green " ---> 人机验证卸载成功"
+    else
+        echoContent red " ---> 选择错误"
+        ipv6HumanVerification
+        exit
+    fi
+
+    if [[ "${coreInstallType}" = "1" ]]
+    then
+        handleXray stop
+        handleXray start
+
+    elif [[ "${coreInstallType}" = "2" || "${coreInstallType}" = "3" ]]
+    then
+        handleV2Ray stop
+        handleV2Ray start
+    fi
+}
+
 # v2ray-core个性化安装
 customV2RayInstall(){
     echoContent skyBlue "\n========================个性化安装============================"
-    echoContent yellow "VLESS前置，默认安装0，如果只需要安装0，则只选择0即可"
+    echoContent yellow "VLESS前置，必须安装0，如果只需要安装0，回车即可"
     if [[ "${selectCoreType}" = "2" ]]
     then
         echoContent yellow "0.VLESS+TLS+TCP"
@@ -3461,9 +3060,10 @@ customV2RayInstall(){
     echoContent skyBlue "--------------------------------------------------------------"
     if [[ -z ${selectCustomInstallType} ]]
     then
-        echoContent red " ---> 不可为空"
-        customV2RayInstall
-    elif [[ "${selectCustomInstallType}" =~ ^[0-4]+$ ]]
+        selectCustomInstallType=0
+    fi
+
+    if [[ "${selectCustomInstallType}" =~ ^[0-4]+$ ]]
     then
         cleanUp xrayClean
         totalProgress=17
@@ -3725,7 +3325,7 @@ menu(){
     cd
     echoContent red "\n=============================================================="
     echoContent green "作者：mack-a"
-    echoContent green "当前版本：v2.1.27"
+    echoContent green "当前版本：v2.2.21"
     echoContent green "Github：https://github.com/mack-a/v2ray-agent"
     echoContent green "描述：七合一共存脚本"
     echoContent red "=============================================================="
@@ -3736,15 +3336,16 @@ menu(){
     echoContent yellow "4.更换伪装站"
     echoContent yellow "5.更新证书"
     echoContent yellow "6.更换CDN节点"
-    echoContent yellow "7.重置uuid"
+    echoContent yellow "7.多用户管理"
+    echoContent yellow "8.ipv6人机验证"
     echoContent skyBlue "-------------------------版本管理-----------------------------"
-    echoContent yellow "8.core版本管理"
-    echoContent yellow "9.升级Trojan-Go"
-    echoContent yellow "10.升级脚本"
-    echoContent yellow "11.安装BBR"
+    echoContent yellow "9.core版本管理"
+    echoContent yellow "10.升级Trojan-Go"
+    echoContent yellow "11.升级脚本"
+    echoContent yellow "12.安装BBR"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
-    echoContent yellow "12.查看日志"
-    echoContent yellow "13.卸载脚本"
+    echoContent yellow "13.查看日志"
+    echoContent yellow "14.卸载脚本"
     echoContent red "=============================================================="
     mkdirTools
     aliasInstall
@@ -3769,24 +3370,27 @@ menu(){
             updateV2RayCDN 1
         ;;
         7)
-            resetUUID 1
+            manageUser 1
         ;;
         8)
-            coreVersionManageMenu 1
+            ipv6HumanVerification
         ;;
         9)
-            updateTrojanGo 1
+            coreVersionManageMenu 1
         ;;
         10)
-            updateV2RayAgent 1
+            updateTrojanGo 1
         ;;
         11)
-            bbrInstall
+            updateV2RayAgent 1
         ;;
         12)
-            checkLog 1
+            bbrInstall
         ;;
         13)
+            checkLog 1
+        ;;
+        14)
             unInstall 1
         ;;
     esac

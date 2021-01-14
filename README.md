@@ -26,8 +26,10 @@ systemctl enable v2ray
 
 
 安装成功后需要自己准备一个配置文件，可以参考我的配置文件，请自行修改端口、uuid等参数(执行下面的命令下载参考配置文件)：
+```
+wget https://raw.githubusercontent.com/silveryxx/v2ray-agent/master/config.json  -O -> /usr/local/etc/v2ray/config.json
+```
 
-wget https://raw.githubusercontent.com/bannedbook/fanqiang/master/v2ss/server-cfg/v2/config.json  -O -> /usr/local/etc/v2ray/config.json
 安装完成后，请执行： service v2ray restart ,以确保v2ray启动成功。
 
 控制 V2Ray 的运行的常用命令：
@@ -35,5 +37,6 @@ wget https://raw.githubusercontent.com/bannedbook/fanqiang/master/v2ss/server-cf
 service v2ray restart | force-reload |start|stop|status|reload
 
 测试V2Ray配置文件：
-
+```
 /usr/local/bin/v2ray -test -config /usr/local/etc/v2ray/config.json
+```

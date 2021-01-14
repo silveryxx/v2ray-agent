@@ -1,9 +1,45 @@
 
-## 安装脚本
+# 安装脚本
 ```
 wget -P /root -N --no-check-certificate "https://raw.githubusercontent.com/silveryxx/v2ray-agent/master/install.sh" && chmod 700 /root/install.sh && /root/install.sh
 ```
-## V2ray官方一键安装脚本（新版）
+## 启动脚本
+```
+vasma
+```
+
+## 服务管理
+### Xray-core、v2ray-core、trojan-go
+- 重启
+```
+# xray
+systemctl restart xray
+
+# v2ray
+systemctl restart v2ray
+
+# trojan-go
+systemctl restart trojan-go
+```
+
+- 启动
+````
+# xray
+systemctl start xray
+
+# v2ray
+systemctl start v2ray
+
+# trojan-go
+systemctl start trojan-go
+````
+
+- 关闭
+```
+# xray
+systemctl stop xray
+```
+# V2ray官方一键安装脚本（新版）
 
 V2RAY官方的安装脚本命令为(SSH连接VPS后执行)：
 ```
